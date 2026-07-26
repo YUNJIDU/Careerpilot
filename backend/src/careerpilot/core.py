@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, create_engine, select
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, create_engine, or_, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from careerpilot.excel import COLUMNS, TrackerRow, read_tracker, write_tracker
@@ -362,6 +362,48 @@ class ExcelSyncService:
             for application in self.applications.list()
         ]
         return write_tracker(path, rows)
+
+
+class EmailService:
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def exists(self, account_id: str, raw_hash: str, message_id: str | None) -> bool:
+        with self.database.session() as session:
+            conditions = [EmailRecord.raw_hash == raw_hash]
+            if message_id:
+                conditions.append(
+                    (EmailRecord.account_id == account_id)
+                    & (EmailRecord.message_id == message_id)
+                )
+            return session.scalar(select(EmailRecord).where(or_(*conditions))) is not None
+
+    def record(
+        self,
+        *,
+        account_id: str,
+        raw_hash: str,
+        message_id: str | None,
+        subject: str,
+        sender: str,
+        sent_at: datetime | None,
+        application_id: UUID | None,
+        facts: dict[str, Any],
+    ) -> None:
+        with self.database.session() as session:
+            session.add(
+                EmailRecord(
+                    email_id=raw_hash,
+                    application_id=str(application_id) if application_id else None,
+                    account_id=account_id,
+                    message_id=message_id,
+                    subject=subject,
+                    sender=sender,
+                    sent_at=sent_at,
+                    raw_hash=raw_hash,
+                    evidence={"facts": {key: str(value) for key, value in facts.items()}},
+                )
+            )
 
 
 class JobService:

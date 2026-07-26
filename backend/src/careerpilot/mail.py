@@ -13,12 +13,10 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Protocol
 
-from sqlalchemy import or_, select
-
 from careerpilot.core import (
     ApplicationService,
     Database,
-    EmailRecord,
+    EmailService,
     ExcelSyncService,
     JobService,
 )
@@ -182,11 +180,23 @@ class Imap163Adapter:
             client.logout()
 
     def _connect(self) -> object:
+        if not re.fullmatch(r"[^@\s\"]+@[^@\s\"]+\.[^@\s\"]+", self.email):
+            raise ValueError("invalid email address")
         client = self.client_factory("imap.163.com", 993, timeout=15)
         status, _ = client.login(self.email, self.authorization_code)
         if status != "OK":
             client.logout()
             raise ConnectionError("163 authentication failed")
+        status, _ = client.xatom(
+            "ID",
+            (
+                '("name" "CareerPilot" "version" "0.1.0" '
+                f'"vendor" "CareerPilot" "support-email" "{self.email}")'
+            ),
+        )
+        if status != "OK":
+            client.logout()
+            raise ConnectionError("163 client identity was rejected")
         return client
 
 
@@ -197,6 +207,10 @@ _PATTERNS = {
     "截止时间": re.compile(r"(?:截止时间|截止日期)[：:]\s*(\d{4}-\d{2}-\d{2})"),
     "JD 链接": re.compile(r"(?:JD\s*链接|职位链接)[：:]\s*(https?://[^\s<]+)"),
 }
+_JOB_KEYWORDS = re.compile(
+    r"招聘|应聘|职位|岗位|面试|笔试|测评|录用|offer|application|interview|assessment",
+    re.IGNORECASE,
+)
 
 
 def extract_facts(value: str) -> dict[str, object]:
@@ -213,13 +227,54 @@ def extract_facts(value: str) -> dict[str, object]:
             except ValueError:
                 continue
         facts[field] = extracted
+    if "公司名称" not in facts:
+        company_patterns = (
+            r"感谢您投递【([^】]+)】",
+            r"成功投递([A-Za-z0-9\u4e00-\u9fff]+?)20\d{2}届",
+            r"^【([^】]+)】",
+            r"^(.+?)(?:20\d{2}年)公开招聘",
+        )
+        for pattern in company_patterns:
+            match = re.search(pattern, text, re.MULTILINE)
+            if match:
+                company = re.sub(r"(?:校园招聘|招聘)$", "", match.group(1).strip())
+                if company and company not in {"本公司", "我公司"}:
+                    facts["公司名称"] = company
+                    break
+    if "岗位" not in facts:
+        role_patterns = (
+            r"投递【[^】]+】的(.+?)职位",
+            r"我公司的(.+?)职位",
+            r"投递\s+(?:NIO)?(.+?)岗位",
+            r"——(.+?)(?:\n|$)",
+            r"感谢投递(.+?)(?:\n|$)",
+        )
+        for pattern in role_patterns:
+            match = re.search(pattern, text)
+            if match:
+                role = match.group(1).strip(" ！!-")
+                if role:
+                    facts["岗位"] = role
+                    break
+    if "当前阶段" not in facts:
+        if re.search(r"笔试成绩查询", text):
+            facts["当前阶段"] = "笔试成绩可查询"
+        elif re.search(r"完善简历", text):
+            facts["当前阶段"] = "简历待完善"
+        elif re.search(r"投递成功|感谢.{0,3}投递|收到您的简历|已经收到您的简历", text):
+            facts["当前阶段"] = "已投递"
     return facts
+
+
+def is_job_candidate(item: MailItem) -> bool:
+    return bool(_JOB_KEYWORDS.search(f"{item.subject}\n{item.text[:5000]}"))
 
 
 class MailSyncService:
     def __init__(self, database: Database) -> None:
         self.database = database
         self.applications = ApplicationService(database)
+        self.emails = EmailService(database)
         self.excel = ExcelSyncService(database, self.applications)
         self.jobs = JobService(database)
 
@@ -233,6 +288,8 @@ class MailSyncService:
         job = self.jobs.create("mail_sync", idempotency_key)
         processed = 0
         for item in adapter.fetch():
+            if not is_job_candidate(item):
+                continue
             if self._exists(account_id, item):
                 continue
             facts = extract_facts(f"{item.subject}\n{item.text}")
@@ -264,20 +321,16 @@ class MailSyncService:
                         idempotency_key=f"mail:{item.raw_hash}:{field}",
                         evidence=f"{field}: {value}"[:500],
                     )
-            with self.database.session() as session:
-                session.add(
-                    EmailRecord(
-                        email_id=item.raw_hash,
-                        application_id=str(application_id) if application_id else None,
-                        account_id=account_id,
-                        message_id=item.message_id,
-                        subject=item.subject,
-                        sender=item.sender,
-                        sent_at=item.sent_at,
-                        raw_hash=item.raw_hash,
-                        evidence={"facts": {key: str(value) for key, value in facts.items()}},
-                    )
-                )
+            self.emails.record(
+                account_id=account_id,
+                raw_hash=item.raw_hash,
+                message_id=item.message_id,
+                subject=item.subject,
+                sender=item.sender,
+                sent_at=item.sent_at,
+                application_id=application_id,
+                facts=facts,
+            )
             processed += 1
             self.jobs.progress(
                 job.job_id,
@@ -289,11 +342,4 @@ class MailSyncService:
         return processed
 
     def _exists(self, account_id: str, item: MailItem) -> bool:
-        with self.database.session() as session:
-            conditions = [EmailRecord.raw_hash == item.raw_hash]
-            if item.message_id:
-                conditions.append(
-                    (EmailRecord.account_id == account_id)
-                    & (EmailRecord.message_id == item.message_id)
-                )
-            return session.scalar(select(EmailRecord).where(or_(*conditions))) is not None
+        return self.emails.exists(account_id, item.raw_hash, item.message_id)

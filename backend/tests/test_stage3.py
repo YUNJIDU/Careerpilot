@@ -14,6 +14,7 @@ from careerpilot.mail import (
     MailItem,
     MailSyncService,
     extract_facts,
+    is_job_candidate,
 )
 from careerpilot.secrets import WindowsSecretStore
 
@@ -85,6 +86,32 @@ def test_extractor_ignores_prompt_injection_and_remote_html() -> None:
         """
     )
     assert facts == {"公司名称": "Safe Co", "岗位": "Analyst"}
+    assert not is_job_candidate(
+        MailItem(None, "news@example.com", "Weekly news", None, "Nothing relevant", "b" * 64)
+    )
+
+
+def test_extractor_supports_explicit_real_world_templates() -> None:
+    assert extract_facts(
+        "【北方华创校园招聘】邀请您完善简历\n"
+        "感谢您投递【北方华创】的微电子-Agent开发-2027校园招聘职位"
+    ) == {
+        "公司名称": "北方华创",
+        "岗位": "微电子-Agent开发-2027校园招聘",
+        "当前阶段": "简历待完善",
+    }
+    assert extract_facts(
+        "【NIO蔚来】感谢您的投递！——提前批-算法工程师\n"
+        "感谢您投递 NIO提前批-算法工程师岗位，我们已收到您的简历"
+    ) == {
+        "公司名称": "NIO蔚来",
+        "岗位": "提前批-算法工程师",
+        "当前阶段": "已投递",
+    }
+    assert extract_facts("感谢您投递本公司职位\n我公司的算法优化工程师职位") == {
+        "岗位": "算法优化工程师",
+        "当前阶段": "已投递",
+    }
 
 
 def test_windows_secret_store_uses_scoped_target(monkeypatch) -> None:
@@ -115,6 +142,10 @@ def test_163_adapter_is_read_only() -> None:
             self.calls.append(("select", folder, readonly))
             return "OK", []
 
+        def xatom(self, command: str, payload: str):
+            self.calls.append(("xatom", command, payload))
+            return "OK", []
+
         def search(self, charset, *criteria):
             self.calls.append(("search", *criteria))
             return "OK", [b"1"]
@@ -141,6 +172,7 @@ def test_163_adapter_is_read_only() -> None:
         client_factory=factory,
     ).fetch()
     assert item.message_id == "<imap@example>"
+    assert clients[0].calls[2][0:2] == ("xatom", "ID")
     assert ("select", "INBOX", True) in clients[0].calls
     assert ("fetch", b"1", "(BODY.PEEK[])") in clients[0].calls
 
