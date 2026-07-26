@@ -4,10 +4,11 @@ from pathlib import Path
 
 import keyring
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 
 from careerpilot.api import create_app
 from careerpilot.core import ApplicationService, Database, EmailService
-from careerpilot.excel import read_tracker
+from careerpilot.excel import COLUMNS, TrackerRow, read_tracker, write_tracker
 from careerpilot.mail import (
     FixtureMailAdapter,
     Imap163Adapter,
@@ -193,6 +194,98 @@ def test_unlinked_saved_mail_is_reprocessed(tmp_path: Path) -> None:
     assert MailSyncService(database).sync(
         adapter, "fixture", tmp_path / "tracker.xlsx", "reprocess-again"
     ) == 0
+
+
+def test_sync_imports_manual_tracker_and_backfills_linked_mail_dates(tmp_path: Path) -> None:
+    database = Database(tmp_path / "careerpilot.db")
+    applications = ApplicationService(database)
+    app = applications.create("Acme", "Engineer", idempotency_key="existing")
+    tracker = write_tracker(
+        tmp_path / "tracker.xlsx",
+        [
+            TrackerRow(
+                application_id=app.application_id,
+                values={
+                    **dict.fromkeys(COLUMNS),
+                    "投递时间": date(2026, 1, 1),
+                    "公司名称": "Acme",
+                    "岗位": "Engineer",
+                    "当前阶段": "人工阶段",
+                    "备注": "不要覆盖",
+                },
+            ),
+            TrackerRow(
+                values={
+                    **dict.fromkeys(COLUMNS),
+                    "公司名称": "拼多多",
+                    "岗位": "算法工程师-提前批",
+                }
+            ),
+        ],
+    )
+    workbook = load_workbook(tracker)
+    workbook["Tracker"]["Q3"] = None
+    workbook["Tracker"]["R3"] = None
+    workbook.save(tracker)
+    sent_at = datetime(2026, 7, 20, 1, 2, tzinfo=UTC)
+    EmailService(database).record(
+        account_id="fixture",
+        raw_hash="c" * 64,
+        message_id="<stored@example>",
+        subject="Application received",
+        sender="jobs@example.com",
+        sent_at=sent_at,
+        application_id=app.application_id,
+        facts={"当前阶段": "已投递"},
+    )
+
+    class EmptyAdapter:
+        def fetch(self) -> list[MailItem]:
+            return []
+
+    assert MailSyncService(database).sync(
+        EmptyAdapter(), "fixture", tracker, "reconcile"
+    ) == 0
+    rows = {row.values["公司名称"]: row.values for row in read_tracker(tracker)}
+    assert rows["Acme"]["投递时间"] == sent_at.date()
+    assert rows["Acme"]["最近更新时间"] == sent_at.replace(tzinfo=None)
+    assert rows["Acme"]["当前阶段"] == "人工阶段"
+    assert rows["Acme"]["备注"] == "不要覆盖"
+    assert rows["拼多多"]["岗位"] == "算法工程师-提前批"
+
+
+def test_newer_mail_updates_manual_stage_but_not_manual_note(tmp_path: Path) -> None:
+    database = Database(tmp_path / "careerpilot.db")
+    applications = ApplicationService(database)
+    app = applications.create("Acme", "Engineer", idempotency_key="existing")
+    tracker = write_tracker(
+        tmp_path / "tracker.xlsx",
+        [
+            TrackerRow(
+                application_id=app.application_id,
+                values={
+                    **dict.fromkeys(COLUMNS),
+                    "公司名称": "Acme",
+                    "岗位": "Engineer",
+                    "当前阶段": "人工阶段",
+                    "备注": "人工备注",
+                },
+            )
+        ],
+    )
+    fixture = tmp_path / "mail"
+    fixture.mkdir()
+    write_mail(
+        fixture / "future.eml",
+        "Acme 面试通知",
+        "公司：Acme\n岗位：Engineer\n阶段：一面",
+        sent_at=datetime(2030, 1, 1, tzinfo=UTC),
+    )
+
+    MailSyncService(database).sync(FixtureMailAdapter(fixture), "fixture", tracker, "newer")
+    loaded = applications.get(app.application_id)
+    assert loaded.values["当前阶段"] == "一面"
+    assert loaded.values["备注"] == "人工备注"
 
 
 def test_windows_secret_store_uses_scoped_target(monkeypatch) -> None:
