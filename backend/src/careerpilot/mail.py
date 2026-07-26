@@ -4,14 +4,15 @@ import hashlib
 import imaplib
 import re
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from email import policy
 from email.message import Message
 from email.parser import BytesParser
-from email.utils import parsedate_to_datetime
+from email.utils import parseaddr, parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Protocol
+from uuid import UUID
 
 from careerpilot.core import (
     ApplicationService,
@@ -213,7 +214,7 @@ _JOB_KEYWORDS = re.compile(
 )
 
 
-def extract_facts(value: str) -> dict[str, object]:
+def extract_facts(value: str, sender: str = "") -> dict[str, object]:
     text = html_to_text(value) if "<" in value and ">" in value else value
     facts: dict[str, object] = {}
     for field, pattern in _PATTERNS.items():
@@ -244,7 +245,7 @@ def extract_facts(value: str) -> dict[str, object]:
     if "岗位" not in facts:
         role_patterns = (
             r"投递【[^】]+】的(.+?)职位",
-            r"我公司的(.+?)职位",
+            r"(?:我公司|本公司)的?(.+?)职位",
             r"投递\s+(?:NIO)?(.+?)岗位",
             r"——(.+?)(?:\n|$)",
             r"感谢投递(.+?)(?:\n|$)",
@@ -256,12 +257,35 @@ def extract_facts(value: str) -> dict[str, object]:
                 if role:
                     facts["岗位"] = role
                     break
+    if "公司名称" not in facts and "岗位" in facts and re.search(r"我公司|本公司", text):
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if lines:
+            signature = lines[-1]
+            if (
+                2 <= len(signature) <= 50
+                and not re.search(r"[，。！？：；]", signature)
+                and not re.search(r"我公司|本公司|职位|岗位", signature)
+                and re.search(r"[A-Za-z\u4e00-\u9fff]", signature)
+            ):
+                facts["公司名称"] = signature
+        if "公司名称" not in facts:
+            display_name = parseaddr(sender)[0].strip()
+            if re.search(
+                r"公司|集团|科技|银行|招聘|人才|人力|大学|学院|研究院|ArcSoft|虹软",
+                display_name,
+                re.IGNORECASE,
+            ):
+                facts["公司名称"] = display_name
     if "当前阶段" not in facts:
-        if re.search(r"笔试成绩查询", text):
+        if re.search(r"(?:笔试|考试)成绩.{0,12}(?:查询|公布|发布|开放|可查|已开通)", text):
             facts["当前阶段"] = "笔试成绩可查询"
         elif re.search(r"完善简历", text):
             facts["当前阶段"] = "简历待完善"
-        elif re.search(r"投递成功|感谢.{0,3}投递|收到您的简历|已经收到您的简历", text):
+        elif re.search(
+            r"投递成功|提交成功|感谢.{0,8}(?:投递|应聘)|"
+            r"(?:已经|已|我们已经)?收到.{0,4}(?:您的)?(?:简历|申请)",
+            text,
+        ):
             facts["当前阶段"] = "已投递"
     return facts
 
@@ -290,10 +314,15 @@ class MailSyncService:
         for item in adapter.fetch():
             if not is_job_candidate(item):
                 continue
-            if self._exists(account_id, item):
+            exists, linked_application_id = self.emails.find(
+                account_id, item.raw_hash, item.message_id
+            )
+            if linked_application_id:
                 continue
-            facts = extract_facts(f"{item.subject}\n{item.text}")
+            facts = extract_facts(f"{item.subject}\n{item.text}", item.sender)
             company, role = facts.get("公司名称"), facts.get("岗位")
+            if company and not role and facts.get("当前阶段"):
+                role = facts["岗位"] = "岗位待确认"
             application_id = None
             if company and role:
                 application = next(
@@ -321,16 +350,23 @@ class MailSyncService:
                         idempotency_key=f"mail:{item.raw_hash}:{field}",
                         evidence=f"{field}: {value}"[:500],
                     )
-            self.emails.record(
-                account_id=account_id,
-                raw_hash=item.raw_hash,
-                message_id=item.message_id,
-                subject=item.subject,
-                sender=item.sender,
-                sent_at=item.sent_at,
-                application_id=application_id,
-                facts=facts,
-            )
+                self._apply_message_dates(application.application_id, item, facts)
+            if exists:
+                if application_id:
+                    self.emails.link(item.raw_hash, application_id, facts)
+                else:
+                    continue
+            else:
+                self.emails.record(
+                    account_id=account_id,
+                    raw_hash=item.raw_hash,
+                    message_id=item.message_id,
+                    subject=item.subject,
+                    sender=item.sender,
+                    sent_at=item.sent_at,
+                    application_id=application_id,
+                    facts=facts,
+                )
             processed += 1
             self.jobs.progress(
                 job.job_id,
@@ -341,5 +377,31 @@ class MailSyncService:
         self.jobs.complete(job.job_id, {"processed": processed})
         return processed
 
-    def _exists(self, account_id: str, item: MailItem) -> bool:
-        return self.emails.exists(account_id, item.raw_hash, item.message_id)
+    def _apply_message_dates(
+        self, application_id: UUID, item: MailItem, facts: dict[str, object]
+    ) -> None:
+        if not item.sent_at:
+            return
+        sent_at = item.sent_at
+        if sent_at.tzinfo:
+            sent_at = sent_at.astimezone(UTC).replace(tzinfo=None)
+        current = self.applications.get(application_id)
+        if facts.get("当前阶段") == "已投递" and not current.values.get("投递时间"):
+            self.applications.apply_field_change(
+                application_id,
+                "投递时间",
+                sent_at.date(),
+                source="mail",
+                idempotency_key=f"mail:{item.raw_hash}:投递时间",
+                evidence=f"Date: {item.sent_at.isoformat()}",
+            )
+        previous = current.values.get("最近更新时间")
+        if not isinstance(previous, datetime) or sent_at > previous:
+            self.applications.apply_field_change(
+                application_id,
+                "最近更新时间",
+                sent_at,
+                source="mail",
+                idempotency_key=f"mail:{item.raw_hash}:最近更新时间",
+                evidence=f"Date: {item.sent_at.isoformat()}",
+            )

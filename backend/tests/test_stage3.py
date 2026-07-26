@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import UTC, date, datetime
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -6,7 +6,7 @@ import keyring
 from fastapi.testclient import TestClient
 
 from careerpilot.api import create_app
-from careerpilot.core import ApplicationService, Database
+from careerpilot.core import ApplicationService, Database, EmailService
 from careerpilot.excel import read_tracker
 from careerpilot.mail import (
     FixtureMailAdapter,
@@ -19,12 +19,22 @@ from careerpilot.mail import (
 from careerpilot.secrets import WindowsSecretStore
 
 
-def write_mail(path: Path, subject: str, body: str, message_id: str = "<one@example>") -> None:
+def write_mail(
+    path: Path,
+    subject: str,
+    body: str,
+    message_id: str = "<one@example>",
+    *,
+    sent_at: datetime | None = None,
+    sender: str = "jobs@example.com",
+) -> None:
     message = EmailMessage()
-    message["From"] = "jobs@example.com"
+    message["From"] = sender
     message["To"] = "candidate@example.com"
     message["Subject"] = subject
     message["Message-ID"] = message_id
+    if sent_at:
+        message["Date"] = sent_at
     message.set_content(body)
     path.write_bytes(message.as_bytes())
 
@@ -112,6 +122,77 @@ def test_extractor_supports_explicit_real_world_templates() -> None:
         "岗位": "算法优化工程师",
         "当前阶段": "已投递",
     }
+
+
+def test_real_mail_rules_export_arcsoft_guizhou_and_dates(tmp_path: Path) -> None:
+    fixture = tmp_path / "mail"
+    fixture.mkdir()
+    first_sent = datetime(2026, 7, 20, 1, 2, tzinfo=UTC)
+    write_mail(
+        fixture / "arcsoft.eml",
+        "感谢您投递本公司职位",
+        "杜云基，您好！\n感谢您投递我公司的27届校招提前批-算法优化工程师职位，"
+        "我们已经收到您的简历，期待能够与您成为同事。\nArcSoft虹软",
+        "<arcsoft@example>",
+        sent_at=first_sent,
+        sender="ArcSoft虹软 <noreply@example.com>",
+    )
+    write_mail(
+        fixture / "guizhou.eml",
+        "贵州金融控股集团有限责任公司（贵州贵民投资集团有限责任公司）"
+        "2026年公开招聘应届毕业生笔试成绩查询通知",
+        "考生您好，笔试成绩查询通道已开通，请登录招聘系统查询笔试成绩。",
+        "<guizhou@example>",
+        sent_at=datetime(2026, 7, 22, 3, 4, tzinfo=UTC),
+    )
+
+    tracker = tmp_path / "tracker.xlsx"
+    assert MailSyncService(Database(tmp_path / "careerpilot.db")).sync(
+        FixtureMailAdapter(fixture), "fixture", tracker, "real-rules"
+    ) == 2
+    rows = {row.values["公司名称"]: row.values for row in read_tracker(tracker)}
+    arcsoft = rows["ArcSoft虹软"]
+    assert arcsoft["岗位"] == "27届校招提前批-算法优化工程师"
+    assert arcsoft["当前阶段"] == "已投递"
+    assert arcsoft["投递时间"] == first_sent.date()
+    assert arcsoft["最近更新时间"] == first_sent.replace(tzinfo=None)
+    guizhou = rows["贵州金融控股集团有限责任公司（贵州贵民投资集团有限责任公司）"]
+    assert guizhou["岗位"] == "岗位待确认"
+    assert guizhou["当前阶段"] == "笔试成绩可查询"
+
+
+def test_unlinked_saved_mail_is_reprocessed(tmp_path: Path) -> None:
+    fixture = tmp_path / "mail"
+    fixture.mkdir()
+    write_mail(
+        fixture / "saved.eml",
+        "感谢您投递本公司职位",
+        "感谢您投递我公司的算法工程师职位，我们已经收到您的简历。\n"
+        "ArcSoft虹软\n请勿回复此邮件。",
+        sender="ArcSoft虹软 <noreply@example.com>",
+    )
+    adapter = FixtureMailAdapter(fixture)
+    [item] = adapter.fetch()
+    database = Database(tmp_path / "careerpilot.db")
+    EmailService(database).record(
+        account_id="fixture",
+        raw_hash=item.raw_hash,
+        message_id=item.message_id,
+        subject=item.subject,
+        sender=item.sender,
+        sent_at=item.sent_at,
+        application_id=None,
+        facts={"岗位": "算法工程师", "当前阶段": "已投递"},
+    )
+
+    assert MailSyncService(database).sync(
+        adapter, "fixture", tmp_path / "tracker.xlsx", "reprocess"
+    ) == 1
+    [application] = ApplicationService(database).list()
+    assert (application.company, application.role) == ("ArcSoft虹软", "算法工程师")
+    assert MailSyncService(database).sync(
+        adapter, "fixture", tmp_path / "tracker.xlsx", "reprocess-again"
+    ) == 0
 
 
 def test_windows_secret_store_uses_scoped_target(monkeypatch) -> None:

@@ -2,7 +2,7 @@
 
 Date: 2026-07-26
 
-Status: Approved approach, pending written-spec review
+Status: Approved design, pending written-spec review
 
 ## Goal
 
@@ -96,8 +96,34 @@ Final manual acceptance requires one real 163 message to produce traceable
 SQLite data and a valid `data/tracker.xlsx` row without any server-side mailbox
 mutation.
 
+## Real-mail rule extension
+
+The deterministic extractor must recognize common Chinese recruitment wording
+without introducing an LLM or a new dependency.
+
+- Treat phrases such as `感谢您投递`, `已经收到您的简历`, `简历提交成功`,
+  `笔试通知`, `面试安排`, and `成绩查询` as recruitment evidence.
+- Extract a role from `感谢您投递我公司的{role}职位` and equivalent
+  `本公司` or `岗位` forms.
+- When the body uses `我公司` or `本公司`, an organization-like closing
+  signature may supply the company name. A personal sender name or address is
+  not sufficient evidence.
+- Map `笔试成绩查询`, `成绩查询已开通`, and equivalent explicit wording to
+  `笔试成绩可查询`.
+- If company and recruitment stage are explicit but the role is absent, create
+  the application with role `岗位待确认` rather than dropping the message.
+- Use the message `Date` for `投递时间` on the first application-receipt event
+  and for `最近更新时间` on every accepted state event. Later messages must not
+  overwrite the original application time.
+- Reprocess stored emails that have not been linked to an application. Already
+  linked messages remain idempotent.
+
+The minimum regression set contains the two ArcSoft receipt examples and the
+Guizhou Financial Holding written-test result example supplied during manual
+acceptance. It verifies company, role, stage, timestamps, fallback role,
+reprocessing, and duplicate prevention.
+
 ## Deferred
 
 - LLM extraction, formal Web UI, schedules, Gmail/Outlook, attachments,
   Markdown/Summary, recommendations, and outbound mail.
-
