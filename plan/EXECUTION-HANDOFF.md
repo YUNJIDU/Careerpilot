@@ -60,19 +60,15 @@ CareerPilot 是辅助求职 Agent，不替用户查看邮件、作求职决定�
 - [Stage 3](implementation/stage-03-implementation.md)
 - [Stage 4](implementation/stage-04-implementation.md)
 
-## 当前第一步
+## 当前状态与下一步
 
-只执行 Stage 0：
-
-- 检查仓库和环境现状。
-- 建立 Apache-2.0、Git 忽略和依赖许可证基线。
-- 建立 Backend/Frontend 工程骨架。
-- 建立 `/api/v1/health`。
-- 定义契约、扩展接口、SecretStore 与 Job/Checkpoint。
-- 建立安全工具和最低质量流水线。
-- 在 Windows 完成 Stage 0 Demo 和 Exit Gate。
-
-不要提前实现 Excel、SQLite 业务表、真实邮箱或 Summary。
+- Stage 0–3 已完成。
+- FastAPI、React 骨架、Excel 引擎、SQLite/Application Core、持久化
+  Job/Checkpoint、Fixture 邮件、163 只读 IMAP、规则提取和
+  Mail → SQLite → Excel 闭环已通过测试。
+- 下一步只执行 Stage 4：本地 Web、岗位 Markdown、手动 Summary 和
+  Docker 首发验收。
+- 运行数据继续保留在 `data/`，不得提交真实邮件、数据库、Tracker 或凭证。
 
 ## 不可违反的边界
 

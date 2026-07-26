@@ -217,6 +217,8 @@ def read_tracker(path: Path, root: Path | None = None) -> list[TrackerRow]:
                     row=row_index,
                     column=name,
                 )
+            if name in {"投递时间", "截止时间"} and isinstance(value, datetime):
+                value = value.date()
             values[name] = value
         try:
             result.append(
