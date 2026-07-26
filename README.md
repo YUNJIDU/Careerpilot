@@ -21,7 +21,7 @@ defines the product and architecture boundaries.
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements.txt
 .\.venv\Scripts\python -m pytest .\backend\tests
-.\.venv\Scripts\python -m uvicorn careerpilot.api:app --app-dir .\backend\src --host 127.0.0.1
+.\.venv\Scripts\python -m uvicorn careerpilot.api:app --app-dir .\backend\src --host 127.0.0.1 --port 9998
 ```
 
 In another terminal:
@@ -31,6 +31,9 @@ cd frontend
 npm install
 npm run dev
 ```
+
+The frontend runs at `http://127.0.0.1:9999` and calls the backend at
+`http://127.0.0.1:9998`.
 
 Runtime data belongs in `data/` and must not be committed. Docker support is
 deferred to Stage 4.

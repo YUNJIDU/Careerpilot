@@ -17,11 +17,11 @@ def test_health_and_local_cors() -> None:
     response = client.options(
         "/api/v1/health",
         headers={
-            "Origin": "http://127.0.0.1:5173",
+            "Origin": "http://127.0.0.1:9999",
             "Access-Control-Request-Method": "GET",
         },
     )
-    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:9999"
 
 
 def test_contract_requires_timezone() -> None:
