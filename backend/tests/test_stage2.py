@@ -4,6 +4,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 
 from careerpilot.api import create_app
 from careerpilot.core import ApplicationService, Database, ExcelSyncService, JobService
@@ -65,6 +66,46 @@ def test_excel_database_round_trip_and_user_edit(tmp_path: Path) -> None:
     write_tracker(output, [exported])
     sync.import_workbook(output, "import-2")
     assert applications.get(row.application_id).values["备注"] == "user note"
+
+
+def test_manual_row_without_id_is_imported_and_preserved(tmp_path: Path) -> None:
+    database = Database(tmp_path / "careerpilot.db")
+    applications = ApplicationService(database)
+    sync = ExcelSyncService(database, applications)
+    tracker = write_tracker(
+        tmp_path / "tracker.xlsx",
+        [
+            TrackerRow(
+                values={
+                    **dict.fromkeys(COLUMNS),
+                    "公司名称": "拼多多",
+                    "岗位": "算法工程师-提前批",
+                    "当前阶段": "测评",
+                    "备注": "手动添加",
+                }
+            )
+        ],
+    )
+    workbook = load_workbook(tracker)
+    workbook["Tracker"]["Q2"] = None
+    workbook["Tracker"]["R2"] = None
+    workbook.save(tracker)
+
+    assert sync.import_workbook(tracker, "manual-import") == 1
+    [application] = applications.list()
+    assert application.values["备注"] == "手动添加"
+    applications.apply_field_change(
+        application.application_id,
+        "备注",
+        "邮件备注",
+        source="mail",
+        idempotency_key="mail-note",
+    )
+    assert applications.get(application.application_id).values["备注"] == "手动添加"
+    sync.export_workbook(tracker)
+    [row] = read_tracker(tracker)
+    assert row.application_id == application.application_id
+    assert row.row_version >= 1
 
 
 def test_job_checkpoint_persists(tmp_path: Path) -> None:

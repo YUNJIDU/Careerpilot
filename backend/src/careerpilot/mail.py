@@ -20,6 +20,8 @@ from careerpilot.core import (
     EmailService,
     ExcelSyncService,
     JobService,
+    StoredEmail,
+    normalize_identity,
 )
 
 MAX_MESSAGE_BYTES = 2 * 1024 * 1024
@@ -310,6 +312,11 @@ class MailSyncService:
         idempotency_key: str,
     ) -> int:
         job = self.jobs.create("mail_sync", idempotency_key)
+        if tracker_path.exists():
+            self.excel.import_workbook(
+                tracker_path, f"{idempotency_key}:tracker-import"
+            )
+        self._reconcile_linked_mail()
         processed = 0
         for item in adapter.fetch():
             if not is_job_candidate(item):
@@ -329,7 +336,10 @@ class MailSyncService:
                     (
                         candidate
                         for candidate in self.applications.list()
-                        if candidate.company == company and candidate.role == role
+                        if normalize_identity(candidate.company)
+                        == normalize_identity(str(company))
+                        and normalize_identity(candidate.role)
+                        == normalize_identity(str(role))
                     ),
                     None,
                 )
@@ -342,6 +352,8 @@ class MailSyncService:
                 for field, value in facts.items():
                     if field in {"公司名称", "岗位"}:
                         continue
+                    if field == "当前阶段" and item.sent_at:
+                        continue
                     self.applications.apply_field_change(
                         application.application_id,
                         field,
@@ -350,7 +362,6 @@ class MailSyncService:
                         idempotency_key=f"mail:{item.raw_hash}:{field}",
                         evidence=f"{field}: {value}"[:500],
                     )
-                self._apply_message_dates(application.application_id, item, facts)
             if exists:
                 if application_id:
                     self.emails.link(item.raw_hash, application_id, facts)
@@ -373,35 +384,64 @@ class MailSyncService:
                 "message_committed",
                 {"last_message_id": item.message_id, "processed": processed},
             )
+        self._reconcile_linked_mail()
         self.excel.export_workbook(tracker_path)
         self.jobs.complete(job.job_id, {"processed": processed})
         return processed
 
-    def _apply_message_dates(
-        self, application_id: UUID, item: MailItem, facts: dict[str, object]
-    ) -> None:
-        if not item.sent_at:
-            return
-        sent_at = item.sent_at
-        if sent_at.tzinfo:
-            sent_at = sent_at.astimezone(UTC).replace(tzinfo=None)
-        current = self.applications.get(application_id)
-        if facts.get("当前阶段") == "已投递" and not current.values.get("投递时间"):
-            self.applications.apply_field_change(
-                application_id,
-                "投递时间",
-                sent_at.date(),
-                source="mail",
-                idempotency_key=f"mail:{item.raw_hash}:投递时间",
-                evidence=f"Date: {item.sent_at.isoformat()}",
+    def _reconcile_linked_mail(self) -> None:
+        by_application: dict[UUID, list[StoredEmail]] = {}
+        for email in self.emails.linked():
+            by_application.setdefault(email.application_id, []).append(email)
+        for application_id, emails in by_application.items():
+            emails.sort(key=lambda email: self._naive_utc(email.sent_at))
+            receipt = next(
+                (
+                    email
+                    for email in emails
+                    if email.facts.get("当前阶段") == "已投递"
+                ),
+                None,
             )
-        previous = current.values.get("最近更新时间")
-        if not isinstance(previous, datetime) or sent_at > previous:
+            if receipt:
+                sent_at = self._naive_utc(receipt.sent_at)
+                self.applications.apply_field_change(
+                    application_id,
+                    "投递时间",
+                    sent_at.date(),
+                    source="mail_authoritative",
+                    idempotency_key=f"reconcile:{receipt.raw_hash}:投递时间",
+                    evidence=f"Date: {receipt.sent_at.isoformat()}",
+                )
+            latest = emails[-1]
+            sent_at = self._naive_utc(latest.sent_at)
             self.applications.apply_field_change(
                 application_id,
                 "最近更新时间",
                 sent_at,
-                source="mail",
-                idempotency_key=f"mail:{item.raw_hash}:最近更新时间",
-                evidence=f"Date: {item.sent_at.isoformat()}",
+                source="mail_authoritative",
+                idempotency_key=f"reconcile:{latest.raw_hash}:最近更新时间",
+                evidence=f"Date: {latest.sent_at.isoformat()}",
             )
+            stage = latest.facts.get("当前阶段")
+            user_changed = self.applications.latest_user_change(
+                application_id, "当前阶段"
+            )
+            if stage and (
+                not user_changed
+                or sent_at > self._naive_utc(user_changed)
+            ):
+                self.applications.apply_field_change(
+                    application_id,
+                    "当前阶段",
+                    stage,
+                    source="mail_authoritative",
+                    idempotency_key=f"reconcile:{latest.raw_hash}:当前阶段",
+                    evidence=f"当前阶段: {stage}",
+                )
+
+    @staticmethod
+    def _naive_utc(value: datetime) -> datetime:
+        if value.tzinfo:
+            return value.astimezone(UTC).replace(tzinfo=None)
+        return value

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import unicodedata
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -7,7 +9,18 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, create_engine, or_, select
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    create_engine,
+    desc,
+    or_,
+    select,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from careerpilot.excel import COLUMNS, TrackerRow, read_tracker, write_tracker
@@ -35,6 +48,13 @@ def _tracker_values(values: dict[str, Any]) -> dict[str, Any]:
         except ValueError:
             pass
     return restored
+
+
+def normalize_identity(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).translate(
+        str.maketrans({"（": "(", "）": ")", "【": "[", "】": "]"})
+    )
+    return re.sub(r"\s+", "", normalized).casefold()
 
 
 class Base(DeclarativeBase):
@@ -173,6 +193,14 @@ class PersistentJob:
     checkpoint: dict[str, Any] | None
 
 
+@dataclass
+class StoredEmail:
+    raw_hash: str
+    application_id: UUID
+    sent_at: datetime
+    facts: dict[str, Any]
+
+
 def _application(record: ApplicationRecord) -> Application:
     return Application(
         application_id=UUID(record.application_id),
@@ -278,8 +306,11 @@ class ApplicationService:
             )
             user_fields = set(record.user_fields)
             if source == "user":
-                user_fields.add(field)
-            if source == "user" or field not in user_fields:
+                if value in (None, ""):
+                    user_fields.discard(field)
+                else:
+                    user_fields.add(field)
+            if source in {"user", "mail_authoritative"} or field not in user_fields:
                 updated = dict(record.values)
                 updated[field] = _json_value(value)
                 record.values = updated
@@ -306,6 +337,19 @@ class ApplicationService:
                 for record in records
             ]
 
+    def latest_user_change(self, application_id: UUID, field: str) -> datetime | None:
+        with self.database.session() as session:
+            record = session.scalar(
+                select(ProvenanceRecord)
+                .where(
+                    ProvenanceRecord.application_id == str(application_id),
+                    ProvenanceRecord.field == field,
+                    ProvenanceRecord.source == "user",
+                )
+                .order_by(desc(ProvenanceRecord.created_at))
+            )
+            return record.created_at if record else None
+
 
 class ExcelSyncService:
     def __init__(self, database: Database, applications: ApplicationService) -> None:
@@ -330,25 +374,41 @@ class ExcelSyncService:
                 )
             )
         for row in rows:
+            target_id = row.application_id
             try:
-                current = self.applications.get(row.application_id)
+                current = self.applications.get(target_id)
             except KeyError:
-                self.applications.create(
-                    str(row.values.get("公司名称") or ""),
-                    str(row.values.get("岗位") or ""),
-                    idempotency_key=f"excel:create:{row.application_id}",
-                    application_id=row.application_id,
-                    values=row.values,
+                company = str(row.values.get("公司名称") or "")
+                role = str(row.values.get("岗位") or "")
+                current = next(
+                    (
+                        application
+                        for application in self.applications.list()
+                        if normalize_identity(application.company) == normalize_identity(company)
+                        and normalize_identity(application.role) == normalize_identity(role)
+                    ),
+                    None,
                 )
-                continue
+                if current:
+                    target_id = current.application_id
+                else:
+                    current = self.applications.create(
+                        company,
+                        role,
+                        idempotency_key=f"excel:create:{target_id}",
+                        application_id=target_id,
+                        values=row.values,
+                    )
             for field, value in row.values.items():
-                if value != current.values.get(field):
+                if value != current.values.get(field) or (
+                    row.generated_id and value not in (None, "")
+                ):
                     self.applications.apply_field_change(
-                        row.application_id,
+                        target_id,
                         field,
                         value,
                         source="user",
-                        idempotency_key=f"{idempotency_key}:{row.application_id}:{field}",
+                        idempotency_key=f"{idempotency_key}:{target_id}:{field}",
                     )
         return len(rows)
 
@@ -394,6 +454,24 @@ class EmailService:
                 raise KeyError(raw_hash)
             record.application_id = str(application_id)
             record.evidence = {"facts": {key: str(value) for key, value in facts.items()}}
+
+    def linked(self) -> list[StoredEmail]:
+        with self.database.session() as session:
+            records = session.scalars(
+                select(EmailRecord).where(
+                    EmailRecord.application_id.is_not(None),
+                    EmailRecord.sent_at.is_not(None),
+                )
+            )
+            return [
+                StoredEmail(
+                    raw_hash=record.raw_hash,
+                    application_id=UUID(str(record.application_id)),
+                    sent_at=record.sent_at,
+                    facts=dict(record.evidence.get("facts", {})),
+                )
+                for record in records
+            ]
 
     def record(
         self,

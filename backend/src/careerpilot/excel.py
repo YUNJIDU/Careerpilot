@@ -61,6 +61,7 @@ class TrackerRow(BaseModel):
     application_id: UUID = Field(default_factory=uuid4)
     row_version: int = Field(default=1, ge=1)
     values: dict[str, str | date | datetime | None]
+    generated_id: bool = False
 
 
 class ChangeKind(StrEnum):
@@ -167,16 +168,20 @@ def read_tracker(path: Path, root: Path | None = None) -> list[TrackerRow]:
         if all(sheet.cell(row_index, positions[name]).value is None for name in COLUMNS):
             continue
         raw_id = sheet.cell(row_index, positions[_ID_COLUMN]).value
-        try:
-            application_id = UUID(str(raw_id))
-        except (TypeError, ValueError) as exc:
-            raise ExcelError(
-                "excel.invalid_id",
-                "application ID is invalid",
-                sheet=SHEET_NAME,
-                row=row_index,
-                column=_ID_COLUMN,
-            ) from exc
+        generated_id = raw_id in (None, "")
+        if generated_id:
+            application_id = uuid4()
+        else:
+            try:
+                application_id = UUID(str(raw_id))
+            except (TypeError, ValueError) as exc:
+                raise ExcelError(
+                    "excel.invalid_id",
+                    "application ID is invalid",
+                    sheet=SHEET_NAME,
+                    row=row_index,
+                    column=_ID_COLUMN,
+                ) from exc
         if application_id in seen:
             raise ExcelError(
                 "excel.duplicate_id",
@@ -224,8 +229,9 @@ def read_tracker(path: Path, root: Path | None = None) -> list[TrackerRow]:
             result.append(
                 TrackerRow(
                     application_id=application_id,
-                    row_version=sheet.cell(row_index, positions[_VERSION_COLUMN]).value,
+                    row_version=sheet.cell(row_index, positions[_VERSION_COLUMN]).value or 1,
                     values=values,
+                    generated_id=generated_id,
                 )
             )
         except ValidationError as exc:
