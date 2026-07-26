@@ -369,6 +369,11 @@ class EmailService:
         self.database = database
 
     def exists(self, account_id: str, raw_hash: str, message_id: str | None) -> bool:
+        return self.find(account_id, raw_hash, message_id)[0]
+
+    def find(
+        self, account_id: str, raw_hash: str, message_id: str | None
+    ) -> tuple[bool, UUID | None]:
         with self.database.session() as session:
             conditions = [EmailRecord.raw_hash == raw_hash]
             if message_id:
@@ -376,7 +381,19 @@ class EmailService:
                     (EmailRecord.account_id == account_id)
                     & (EmailRecord.message_id == message_id)
                 )
-            return session.scalar(select(EmailRecord).where(or_(*conditions))) is not None
+            record = session.scalar(select(EmailRecord).where(or_(*conditions)))
+            application_id = UUID(record.application_id) if record and record.application_id else None
+            return record is not None, application_id
+
+    def link(self, raw_hash: str, application_id: UUID, facts: dict[str, Any]) -> None:
+        with self.database.session() as session:
+            record = session.scalar(
+                select(EmailRecord).where(EmailRecord.raw_hash == raw_hash)
+            )
+            if not record:
+                raise KeyError(raw_hash)
+            record.application_id = str(application_id)
+            record.evidence = {"facts": {key: str(value) for key, value in facts.items()}}
 
     def record(
         self,
