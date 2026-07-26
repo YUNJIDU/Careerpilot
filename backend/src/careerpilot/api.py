@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 
-def create_app(frontend_origin: str = "http://127.0.0.1:5173") -> FastAPI:
+def create_app(frontend_origin: str = "http://127.0.0.1:9999") -> FastAPI:
     app = FastAPI(title="CareerPilot", version="0.1.0")
     app.add_middleware(
         CORSMiddleware,
@@ -19,4 +19,3 @@ def create_app(frontend_origin: str = "http://127.0.0.1:5173") -> FastAPI:
 
 
 app = create_app()
-

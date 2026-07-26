@@ -6,7 +6,7 @@ type Health = { status: string; version: string };
 function App() {
   const [health, setHealth] = useState<Health | null>(null);
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/api/v1/health")
+    fetch("http://127.0.0.1:9998/api/v1/health")
       .then((response) => response.json())
       .then(setHealth);
   }, []);
@@ -14,4 +14,3 @@ function App() {
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
-
