@@ -1,5 +1,7 @@
 # Stage 2–3 Mail-to-Excel Execution Loop
 
+Status: Complete (2026-07-28)
+
 ## Entry
 
 - Stage 0–1 tests pass.
@@ -77,6 +79,10 @@ Gate: fixture and 163 adapters pass the same contract tests.
 
 Gate: every Stage 3 Exit Gate passes, or the real-mail item is explicitly
 reported as awaiting user-side acceptance.
+
+Final result: all Stage 3 gates passed. The real 163 connection and read-only
+sync succeeded, a repeated window processed zero duplicate messages, and the
+automated recovery/security suite passed.
 
 ## Commands
 

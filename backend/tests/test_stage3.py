@@ -1,3 +1,5 @@
+import imaplib
+import subprocess
 from datetime import UTC, date, datetime
 from email.message import EmailMessage
 from pathlib import Path
@@ -7,7 +9,7 @@ from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
 from careerpilot.api import create_app
-from careerpilot.core import ApplicationService, Database, EmailService
+from careerpilot.core import ApplicationService, Database, EmailService, JobService
 from careerpilot.excel import COLUMNS, TrackerRow, read_tracker, write_tracker
 from careerpilot.mail import (
     FixtureMailAdapter,
@@ -351,6 +353,59 @@ def test_163_adapter_is_read_only() -> None:
     assert ("fetch", b"1", "(BODY.PEEK[])") in clients[0].calls
 
 
+def test_163_adapter_retries_transient_failure_but_not_authentication() -> None:
+    class RetryImap:
+        attempts = 0
+
+        def __init__(self, *args, **kwargs) -> None:
+            RetryImap.attempts += 1
+
+        def login(self, email: str, code: str):
+            if code == "bad":
+                return "NO", []
+            return "OK", []
+
+        def xatom(self, command: str, payload: str):
+            return "OK", []
+
+        def select(self, folder: str, readonly: bool = False):
+            if RetryImap.attempts == 1:
+                raise imaplib.IMAP4.abort("temporary disconnect")
+            return "OK", []
+
+        def search(self, charset, *criteria):
+            return "OK", [b""]
+
+        def logout(self):
+            return "BYE", []
+
+    adapter = Imap163Adapter(
+        "me@163.com",
+        "code",
+        since=date(2026, 1, 1),
+        client_factory=RetryImap,
+        sleep=lambda _: None,
+    )
+    assert adapter.fetch() == []
+    assert RetryImap.attempts == 2
+
+    RetryImap.attempts = 0
+    bad = Imap163Adapter(
+        "me@163.com",
+        "bad",
+        since=date(2026, 1, 1),
+        client_factory=RetryImap,
+        sleep=lambda _: None,
+    )
+    try:
+        bad.fetch()
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("authentication rejection must fail")
+    assert RetryImap.attempts == 1
+
+
 def test_mail_connection_and_sync_api(tmp_path: Path) -> None:
     class SecretStore:
         def get(self, account_id: str, email: str) -> str:
@@ -398,3 +453,98 @@ def test_mail_connection_and_sync_api(tmp_path: Path) -> None:
     )
     assert response.json() == {"processed": 1}
     assert client.get("/api/v1/applications").json()[0]["company"] == "API Co"
+
+
+def test_failed_mail_job_resumes_without_secrets_or_duplicates(tmp_path: Path) -> None:
+    credential = "AUTH_" + "SENTINEL_7391"
+    body_secret = "BODY_" + "SENTINEL_7391"
+    first = MailItem(
+        message_id="<first@example>",
+        sender="jobs@example.com",
+        subject="First application",
+        sent_at=datetime(2026, 7, 1, tzinfo=UTC),
+        text=f"公司：First Co\n岗位：Engineer\n阶段：已投递\n{body_secret}",
+        raw_hash="d" * 64,
+    )
+    second = MailItem(
+        message_id="<second@example>",
+        sender="jobs@example.com",
+        subject="Second application",
+        sent_at=datetime(2026, 7, 2, tzinfo=UTC),
+        text="公司：Second Co\n岗位：Analyst\n阶段：已投递",
+        raw_hash="e" * 64,
+    )
+
+    class SecretStore:
+        def get(self, account_id: str, email: str) -> str:
+            return credential
+
+    class Adapter:
+        creations = 0
+
+        def __init__(self, email: str, code: str, **kwargs) -> None:
+            assert code == credential
+            Adapter.creations += 1
+            self.creation = Adapter.creations
+
+        def fetch(self):
+            if self.creation == 1:
+                def interrupted():
+                    yield first
+                    raise OSError(f"disconnect {credential} {body_secret}")
+
+                return interrupted()
+            return [first, second]
+
+    client = TestClient(
+        create_app(
+            data_dir=tmp_path,
+            secret_store=SecretStore(),
+            mail_adapter_factory=Adapter,
+        )
+    )
+    request = {
+        "account_id": "personal",
+        "email": "me@163.com",
+        "since": "2026-01-01",
+        "limit": 100,
+        "tracker_path": "tracker.xlsx",
+        "idempotency_key": "failed-sync",
+    }
+    failed = client.post("/api/v1/mail-sync-jobs", json=request)
+    assert failed.status_code == 502
+    job_id = failed.json()["detail"]["job_id"]
+    job = client.get(f"/api/v1/jobs/{job_id}").json()
+    assert job["status"] == "failed"
+    assert job["error_code"] == "mail.sync_failed"
+    assert credential not in str(job)
+    assert body_secret not in str(job)
+    assert job["checkpoint"]["account_id"] == "personal"
+
+    resumed = client.post(f"/api/v1/jobs/{job_id}/resume")
+    assert resumed.status_code == 200
+    assert resumed.json()["processed"] == 1
+    applications = client.get("/api/v1/applications").json()
+    assert {item["company"] for item in applications} == {"First Co", "Second Co"}
+
+    assert credential.encode() not in (tmp_path / "careerpilot.db").read_bytes()
+    assert body_secret.encode() not in (tmp_path / "careerpilot.db").read_bytes()
+    assert credential.encode() not in (tmp_path / "tracker.xlsx").read_bytes()
+    assert body_secret.encode() not in (tmp_path / "tracker.xlsx").read_bytes()
+    root = Path(__file__).parents[2]
+    tracked = subprocess.check_output(
+        ["git", "ls-files"], cwd=root, text=True
+    ).splitlines()
+    assert all(
+        credential not in (root / path).read_text(errors="ignore")
+        and body_secret not in (root / path).read_text(errors="ignore")
+        for path in tracked
+        if (root / path).is_file()
+    )
+    assert client.post(
+        "/api/v1/jobs/00000000-0000-0000-0000-000000000000/resume"
+    ).status_code == 404
+    pending = JobService(Database(tmp_path / "careerpilot.db")).create(
+        "mail_sync", "not-failed"
+    )
+    assert client.post(f"/api/v1/jobs/{pending.job_id}/resume").status_code == 409
