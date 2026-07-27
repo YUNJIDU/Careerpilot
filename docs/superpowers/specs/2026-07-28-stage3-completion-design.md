@@ -2,7 +2,7 @@
 
 Date: 2026-07-28
 
-Status: Approved design, pending written-spec review
+Status: Complete
 
 ## Goal
 
@@ -105,6 +105,22 @@ Stage 3 is complete when:
 - the mail-to-SQLite-to-Tracker loop remains idempotent;
 - Stage 3 planning and design documents are marked complete with the recorded
   checks.
+
+## Exit gate result
+
+Completed on 2026-07-28:
+
+- 30 backend tests passed.
+- Ruff passed.
+- Frontend type-check and production build passed.
+- Real 163 connection test returned `200`.
+- Real read-only sync processed three newly observed recruitment-related
+  messages.
+- Repeating the same mailbox window with a new job processed zero messages.
+- Three messages lacked sufficient explicit company-and-role evidence and
+  remain unlinked by design; no guessed Tracker rows were created.
+- Credential and full-body sentinel scans passed across API output, safe job
+  errors, SQLite, Tracker, and Git-tracked files.
 
 ## Deferred
 

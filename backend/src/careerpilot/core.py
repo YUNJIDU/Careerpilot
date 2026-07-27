@@ -191,6 +191,8 @@ class PersistentJob:
     status: str
     current_step: str | None
     checkpoint: dict[str, Any] | None
+    error_code: str | None
+    error_message_safe: str | None
 
 
 @dataclass
@@ -537,7 +539,8 @@ class JobService:
                 select(JobCheckpointRecord).where(JobCheckpointRecord.job_id == str(job_id))
             )
             if checkpoint:
-                checkpoint.step, checkpoint.payload = step, payload
+                checkpoint.step = step
+                checkpoint.payload = {**checkpoint.payload, **payload}
             else:
                 session.add(
                     JobCheckpointRecord(
@@ -567,6 +570,19 @@ class JobService:
             session.flush()
             return self._view(session, record)
 
+    def fail(self, job_id: UUID, error_code: str, message: str) -> PersistentJob:
+        with self.database.session() as session:
+            record = session.get(BackgroundJobRecord, str(job_id))
+            if not record:
+                raise KeyError(job_id)
+            record.status = "failed"
+            record.current_step = "failed"
+            record.error_code = error_code[:100]
+            record.error_message_safe = message[:500]
+            record.updated_at = utcnow()
+            session.flush()
+            return self._view(session, record)
+
     @staticmethod
     def _view(session: Session, record: BackgroundJobRecord) -> PersistentJob:
         checkpoint = session.scalar(
@@ -578,4 +594,6 @@ class JobService:
             status=record.status,
             current_step=record.current_step,
             checkpoint=dict(checkpoint.payload) if checkpoint else None,
+            error_code=record.error_code,
+            error_message_safe=record.error_message_safe,
         )

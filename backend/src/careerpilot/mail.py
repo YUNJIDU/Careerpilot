@@ -3,6 +3,9 @@ from __future__ import annotations
 import hashlib
 import imaplib
 import re
+import time
+from collections.abc import Callable, Iterable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from email import policy
@@ -20,6 +23,7 @@ from careerpilot.core import (
     EmailService,
     ExcelSyncService,
     JobService,
+    PersistentJob,
     StoredEmail,
     normalize_identity,
 )
@@ -39,7 +43,13 @@ class MailItem:
 
 
 class MailAdapter(Protocol):
-    def fetch(self) -> list[MailItem]: ...
+    def fetch(self) -> Iterable[MailItem]: ...
+
+
+class MailSyncError(RuntimeError):
+    def __init__(self, job_id: UUID) -> None:
+        self.job_id = job_id
+        super().__init__("mail sync failed")
 
 
 class _TextExtractor(HTMLParser):
@@ -132,23 +142,32 @@ class Imap163Adapter:
         since: date,
         limit: int = 100,
         client_factory: object = imaplib.IMAP4_SSL,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.email = email
         self.authorization_code = authorization_code
         self.since = since
         self.limit = min(max(limit, 1), 500)
         self.client_factory = client_factory
+        self.sleep = sleep
 
     def test_connection(self) -> None:
+        self._retry(self._test_connection_once)
+
+    def _test_connection_once(self) -> None:
         client = self._connect()
         try:
             status, _ = client.select("INBOX", readonly=True)
             if status != "OK":
                 raise ConnectionError("163 inbox is unavailable")
         finally:
-            client.logout()
+            with suppress(Exception):
+                client.logout()
 
     def fetch(self) -> list[MailItem]:
+        return self._retry(self._fetch_once)
+
+    def _fetch_once(self) -> list[MailItem]:
         client = self._connect()
         try:
             status, _ = client.select("INBOX", readonly=True)
@@ -180,7 +199,20 @@ class Imap163Adapter:
                         continue
             return items
         finally:
-            client.logout()
+            with suppress(Exception):
+                client.logout()
+
+    def _retry(self, operation: Callable[[], object]):
+        for attempt in range(3):
+            try:
+                return operation()
+            except PermissionError:
+                raise
+            except (imaplib.IMAP4.abort, ConnectionError, OSError, TimeoutError):
+                if attempt == 2:
+                    raise
+                self.sleep(attempt + 1)
+        raise AssertionError("unreachable")
 
     def _connect(self) -> object:
         if not re.fullmatch(r"[^@\s\"]+@[^@\s\"]+\.[^@\s\"]+", self.email):
@@ -189,7 +221,7 @@ class Imap163Adapter:
         status, _ = client.login(self.email, self.authorization_code)
         if status != "OK":
             client.logout()
-            raise ConnectionError("163 authentication failed")
+            raise PermissionError("163 authentication failed")
         status, _ = client.xatom(
             "ID",
             (
@@ -199,7 +231,7 @@ class Imap163Adapter:
         )
         if status != "OK":
             client.logout()
-            raise ConnectionError("163 client identity was rejected")
+            raise PermissionError("163 client identity was rejected")
         return client
 
 
@@ -310,8 +342,31 @@ class MailSyncService:
         account_id: str,
         tracker_path: Path,
         idempotency_key: str,
+        resume_payload: dict[str, object] | None = None,
     ) -> int:
         job = self.jobs.create("mail_sync", idempotency_key)
+        if resume_payload:
+            self.jobs.progress(job.job_id, "configured", resume_payload)
+        try:
+            return self._sync(
+                adapter, account_id, tracker_path, job, idempotency_key
+            )
+        except Exception as exc:
+            self.jobs.fail(
+                job.job_id,
+                "mail.sync_failed",
+                "Mailbox synchronization failed after bounded retries.",
+            )
+            raise MailSyncError(job.job_id) from exc
+
+    def _sync(
+        self,
+        adapter: MailAdapter,
+        account_id: str,
+        tracker_path: Path,
+        job: PersistentJob,
+        idempotency_key: str,
+    ) -> int:
         if tracker_path.exists():
             self.excel.import_workbook(
                 tracker_path, f"{idempotency_key}:tracker-import"

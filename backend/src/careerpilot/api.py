@@ -14,7 +14,7 @@ from careerpilot.core import (
     JobService,
     upgrade_database,
 )
-from careerpilot.mail import Imap163Adapter, MailAdapter, MailSyncService
+from careerpilot.mail import Imap163Adapter, MailAdapter, MailSyncError, MailSyncService
 from careerpilot.secrets import WindowsSecretStore
 from careerpilot.security import safe_path
 
@@ -104,6 +104,8 @@ def create_app(
             "status": job.status,
             "current_step": job.current_step,
             "checkpoint": job.checkpoint,
+            "error_code": job.error_code,
+            "error_message_safe": job.error_message_safe,
         }
 
     def adapter(request: MailAccountRequest) -> MailAdapter:
@@ -135,13 +137,58 @@ def create_app(
             tracker_path = safe_path(data_dir, Path(request.tracker_path))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        processed = mail.sync(
-            adapter(request),
-            request.account_id,
-            tracker_path,
-            request.idempotency_key,
-        )
+        try:
+            processed = mail.sync(
+                adapter(request),
+                request.account_id,
+                tracker_path,
+                request.idempotency_key,
+                resume_payload=request.model_dump(
+                    mode="json", exclude={"idempotency_key"}
+                ),
+            )
+        except MailSyncError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "mail.sync_failed", "job_id": str(exc.job_id)},
+            ) from exc
         return {"processed": processed}
+
+    @app.post("/api/v1/jobs/{job_id}/resume")
+    def resume_mail_job(job_id: UUID) -> dict[str, object]:
+        try:
+            failed = jobs.get(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="job not found") from exc
+        if failed.job_type != "mail_sync" or failed.status != "failed":
+            raise HTTPException(status_code=409, detail="job is not resumable")
+        try:
+            request = MailSyncRequest(
+                **(failed.checkpoint or {}),
+                idempotency_key=f"resume:{job_id}",
+            )
+            tracker_path = safe_path(data_dir, Path(request.tracker_path))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=409, detail="job resume checkpoint is invalid"
+            ) from exc
+        resumed = jobs.create("mail_sync", request.idempotency_key)
+        try:
+            processed = mail.sync(
+                adapter(request),
+                request.account_id,
+                tracker_path,
+                request.idempotency_key,
+                resume_payload=request.model_dump(
+                    mode="json", exclude={"idempotency_key"}
+                ),
+            )
+        except MailSyncError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "mail.sync_failed", "job_id": str(exc.job_id)},
+            ) from exc
+        return {"job_id": str(resumed.job_id), "processed": processed}
 
     return app
 
