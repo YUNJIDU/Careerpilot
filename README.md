@@ -40,6 +40,10 @@ Excel, Jobs, and Settings pages. Non-secret settings are stored in
 `data/settings.json`; secret inputs are write-only and stored in Windows
 Credential Manager.
 
+Terminal results are shown as `已结束（<环节>未通过）`. Existing values such as
+`笔试挂` are recognized immediately; Web, Excel, and mail updates use the same
+normalization while preserving the timeline.
+
 ## 163 mail sync
 
 Store the client authorization code in Windows Credential Manager without

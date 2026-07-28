@@ -5,7 +5,14 @@ from uuid import UUID
 from fastapi.testclient import TestClient
 
 from careerpilot.api import create_app
-from careerpilot.core import ApplicationService, Database, EmailService
+from careerpilot.core import (
+    ApplicationService,
+    Database,
+    EmailService,
+    ExcelSyncService,
+)
+from careerpilot.excel import COLUMNS, TrackerRow, write_tracker
+from careerpilot.mail import extract_facts
 
 
 class MemorySecrets:
@@ -176,3 +183,64 @@ def test_jobs_list_excel_completion_and_validation(tmp_path: Path) -> None:
     assert succeeded["status"] == "succeeded"
     assert not succeeded["retryable"]
     assert "secret" not in str(jobs).lower()
+
+
+def test_terminal_result_is_consistent_for_web_excel_and_mail(tmp_path: Path) -> None:
+    client = TestClient(create_app(data_dir=tmp_path, secret_store=MemorySecrets()))
+    created = client.post(
+        "/api/v1/applications",
+        json={
+            "company": "Closed Co",
+            "role": "Analyst",
+            "idempotency_key": "closed-web",
+        },
+    ).json()
+    application_id = created["application_id"]
+    closed = client.patch(
+        f"/api/v1/applications/{application_id}",
+        json={
+            "changes": {"笔试": "笔试挂"},
+            "expected_version": 1,
+            "idempotency_key": "close-web",
+        },
+    ).json()
+    assert closed["values"]["笔试"] == "未通过"
+    assert closed["values"]["当前阶段"] == "已结束（笔试未通过）"
+
+    reopened = client.patch(
+        f"/api/v1/applications/{application_id}",
+        json={
+            "changes": {"当前阶段": "流程恢复", "笔试": ""},
+            "expected_version": closed["version"],
+            "idempotency_key": "reopen-web",
+        },
+    ).json()
+    assert reopened["values"]["当前阶段"] == "流程恢复"
+    assert reopened["values"]["笔试"] == ""
+
+    row_values = {
+        **dict.fromkeys(COLUMNS),
+        "公司名称": "Excel Closed Co",
+        "岗位": "Engineer",
+        "笔试": "笔试挂",
+        "当前阶段": "笔试成绩可查询",
+    }
+    workbook = write_tracker(
+        tmp_path / "closed.xlsx",
+        [TrackerRow(values=row_values)],
+    )
+    ExcelSyncService(
+        Database(tmp_path / "careerpilot.db"),
+        ApplicationService(Database(tmp_path / "careerpilot.db")),
+    ).import_workbook(workbook, "closed-excel")
+    excel_application = next(
+        item
+        for item in ApplicationService(Database(tmp_path / "careerpilot.db")).list()
+        if item.company == "Excel Closed Co"
+    )
+    assert excel_application.values["笔试"] == "未通过"
+    assert excel_application.values["当前阶段"] == "已结束（笔试未通过）"
+
+    assert extract_facts(
+        "Closed Co 笔试结果\n很遗憾地通知您，您未能通过本次笔试。"
+    )["当前阶段"] == "已结束（笔试未通过）"

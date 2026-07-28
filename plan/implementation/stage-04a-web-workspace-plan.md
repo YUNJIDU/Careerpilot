@@ -177,6 +177,9 @@ npm run build
 - Application detail:
   editable fields with version-aware save, timeline, provenance, and mail
   evidence.
+- Terminal outcomes:
+  normalize manual or mail results to `已结束（<环节>未通过）`, retain the
+  process-specific value, and allow a later explicit stage to reopen the flow.
 - Mail:
   account/date/limit controls, connection test, sync action, and safe result.
 - Excel:

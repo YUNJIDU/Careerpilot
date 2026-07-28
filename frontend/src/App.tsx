@@ -13,6 +13,25 @@ const NAV: Array<[Page, string, string]> = [
 ];
 
 const EDITABLE_FIELDS = ["公司名称", "岗位", "当前阶段", "投递时间", "截止时间", "JD 链接", "备注"];
+const PROCESS_FIELDS = ["简历通过", "测评", "笔试", "一面", "二面", "三面", "HR 面", "终面"];
+const TERMINAL_PATTERN = /已结束|已拒绝|已撤回|已归档|未通过|淘汰|流程终止|挂/;
+
+function displayStage(values: Record<string, unknown>) {
+  for (const field of [...PROCESS_FIELDS].reverse()) {
+    const result = String(values[field] ?? "");
+    if (TERMINAL_PATTERN.test(result)) {
+      return result.includes("主动") ? "已结束（主动结束）" : `已结束（${field}未通过）`;
+    }
+  }
+  const stage = String(values["当前阶段"] ?? "未设置");
+  if (stage === "已拒绝") return "已结束（流程未通过）";
+  return stage;
+}
+
+function StageBadge({ value }: { value: unknown }) {
+  const stage = String(value || "未设置");
+  return <span className={`badge ${TERMINAL_PATTERN.test(stage) ? "closed" : ""}`}>{stage}</span>;
+}
 
 function route(): { page: Page; id?: string } {
   const value = location.hash.slice(2) || "overview";
@@ -36,7 +55,7 @@ function Notice({ kind = "info", children }: { kind?: "info" | "error" | "succes
 
 function Overview({ applications, jobs }: { applications: Application[]; jobs: Job[] }) {
   const recent = applications.slice(-5).reverse();
-  const active = applications.filter((item) => !["已拒绝", "已撤回", "已归档"].includes(String(item.values["当前阶段"] ?? ""))).length;
+  const active = applications.filter((item) => !TERMINAL_PATTERN.test(displayStage(item.values))).length;
   return <>
     <header className="page-header"><div><p className="eyebrow">本地工作台</p><h1>申请总览</h1><p>集中查看最近变化，并从明确动作开始。</p></div><a className="button primary" href="#/mail">同步邮箱</a></header>
     <section className="stats">
@@ -46,7 +65,7 @@ function Overview({ applications, jobs }: { applications: Application[]; jobs: J
     </section>
     <section className="panel"><div className="section-title"><div><h2>最近申请</h2><p>数据库中的最新申请记录</p></div><a href="#/applications">查看全部</a></div>
       {recent.length ? <div className="table-wrap"><table><thead><tr><th>公司</th><th>职位</th><th>阶段</th><th></th></tr></thead><tbody>
-        {recent.map((item) => <tr key={item.application_id}><td>{item.company}</td><td>{item.role}</td><td><span className="badge">{String(item.values["当前阶段"] ?? "未设置")}</span></td><td><a href={`#/applications/${item.application_id}`}>详情</a></td></tr>)}
+        {recent.map((item) => <tr key={item.application_id}><td>{item.company}</td><td>{item.role}</td><td><StageBadge value={displayStage(item.values)} /></td><td><a href={`#/applications/${item.application_id}`}>详情</a></td></tr>)}
       </tbody></table></div> : <p className="empty">还没有申请记录。先添加一条或同步邮箱。</p>}
     </section>
   </>;
@@ -66,9 +85,9 @@ function ApplicationsPage({ onChanged }: { onChanged: () => void }) {
   useEffect(() => { void load(); }, []);
   const filtered = useMemo(() => items.filter((item) => {
     const text = `${item.company} ${item.role}`.toLowerCase();
-    return text.includes(query.toLowerCase()) && (!stage || item.values["当前阶段"] === stage);
+    return text.includes(query.toLowerCase()) && (!stage || displayStage(item.values) === stage);
   }), [items, query, stage]);
-  const stages = [...new Set(items.map((item) => String(item.values["当前阶段"] ?? "")).filter(Boolean))];
+  const stages = [...new Set(items.map((item) => displayStage(item.values)).filter(Boolean))];
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -84,7 +103,7 @@ function ApplicationsPage({ onChanged }: { onChanged: () => void }) {
     <section className="panel"><h2>新增申请</h2><form className="inline-form" onSubmit={create}><label>公司<input name="company" required maxLength={200} /></label><label>职位<input name="role" required maxLength={200} /></label><button className="button primary">新增</button></form></section>
     <section className="panel"><div className="filters"><label>搜索<input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="公司或职位" /></label><label>阶段<select value={stage} onChange={(e) => setStage(e.target.value)}><option value="">全部</option>{stages.map((value) => <option key={value}>{value}</option>)}</select></label></div>
       {busy ? <p className="empty">正在读取…</p> : filtered.length ? <div className="table-wrap"><table><thead><tr><th>公司</th><th>职位</th><th>阶段</th><th>投递时间</th><th></th></tr></thead><tbody>
-        {filtered.map((item) => <tr key={item.application_id}><td>{item.company}</td><td>{item.role}</td><td><span className="badge">{String(item.values["当前阶段"] ?? "未设置")}</span></td><td>{String(item.values["投递时间"] ?? "—")}</td><td><a href={`#/applications/${item.application_id}`}>查看</a></td></tr>)}
+        {filtered.map((item) => <tr key={item.application_id}><td>{item.company}</td><td>{item.role}</td><td><StageBadge value={displayStage(item.values)} /></td><td>{String(item.values["投递时间"] ?? "—")}</td><td><a href={`#/applications/${item.application_id}`}>查看</a></td></tr>)}
       </tbody></table></div> : <p className="empty">没有符合条件的申请。</p>}
     </section>
   </>;
@@ -95,6 +114,8 @@ function DetailPage({ id, onChanged }: { id: string; onChanged: () => void }) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
+  const [closeStep, setCloseStep] = useState("笔试");
+  const [closeReason, setCloseReason] = useState("未通过");
   const load = async () => {
     try {
       const item = await api.application(id); setDetail(item);
@@ -108,18 +129,40 @@ function DetailPage({ id, onChanged }: { id: string; onChanged: () => void }) {
       const changes = Object.fromEntries(
         Object.entries(values).filter(([field, value]) => value !== String(detail.values[field] ?? "")),
       );
+      if (
+        changes["当前阶段"]
+        && !TERMINAL_PATTERN.test(String(changes["当前阶段"]))
+        && TERMINAL_PATTERN.test(String(detail.values["当前阶段"] ?? ""))
+      ) {
+        for (const field of PROCESS_FIELDS) {
+          if (TERMINAL_PATTERN.test(String(detail.values[field] ?? ""))) changes[field] = "";
+        }
+      }
       if (!Object.keys(changes).length) { setSaved("没有需要保存的变化。"); return; }
       await api.updateApplication(id, changes, detail.version);
       setSaved("已保存人工修改。"); await load(); onChanged();
     } catch (value) { setError(String(value)); }
   };
+  const closeApplication = async () => {
+    if (!detail) return;
+    setError(""); setSaved("");
+    try {
+      await api.updateApplication(id, { [closeStep]: closeReason }, detail.version);
+      setSaved("已记录结束环节和结果。"); await load(); onChanged();
+    } catch (value) { setError(String(value)); }
+  };
   if (!detail) return <>{error ? <Notice kind="error">{error}</Notice> : <p className="empty">正在读取申请详情…</p>}</>;
+  const stage = displayStage(detail.values);
+  const terminal = TERMINAL_PATTERN.test(stage);
   return <>
     <header className="page-header"><div><a className="back" href="#/applications">← 返回申请追踪</a><h1>{detail.company}</h1><p>{detail.role}</p></div><span className="badge">版本 {detail.version}</span></header>
+    {terminal && <div className="terminal-banner"><strong>已结束</strong><span>{stage}</span></div>}
     {error && <Notice kind="error">{error}</Notice>}{saved && <Notice kind="success">{saved}</Notice>}
     <div className="detail-grid"><section className="panel"><h2>申请字段</h2><form className="field-grid" onSubmit={save}>
       {EDITABLE_FIELDS.map((field) => <label key={field}>{field}{field === "备注" ? <textarea value={values[field]} onChange={(e) => setValues({ ...values, [field]: e.target.value })} /> : <input type={field.includes("时间") ? "date" : "text"} value={values[field]} onChange={(e) => setValues({ ...values, [field]: e.target.value })} />}</label>)}
-      <button className="button primary">保存修改</button></form></section>
+      <button className="button primary">保存修改</button></form>
+      <div className="close-box"><h3>结束本次申请</h3><p>记录流程停止在哪个环节；之后仍可通过修改“当前阶段”重新开启。</p><div className="actions"><label>结束环节<select value={closeStep} onChange={(event) => setCloseStep(event.target.value)}>{PROCESS_FIELDS.map((field) => <option key={field}>{field}</option>)}</select></label><label>结果<select value={closeReason} onChange={(event) => setCloseReason(event.target.value)}><option>未通过</option><option>主动结束</option></select></label><button type="button" className="button danger" onClick={() => void closeApplication()}>标记已结束</button></div></div>
+      </section>
       <div><section className="panel"><h2>时间线</h2>{detail.timeline.length ? <ol className="timeline">{detail.timeline.map((item, index) => <li key={`${item.created_at}-${index}`}><b>{String(item.payload.field ?? item.event_type)}</b><span>{String(item.payload.value ?? "")}</span><time>{new Date(item.created_at).toLocaleString()}</time></li>)}</ol> : <p className="empty">暂无时间线。</p>}</section>
       <section className="panel"><h2>邮件证据</h2>{detail.emails.length ? detail.emails.map((mail, index) => <article className="evidence" key={`${mail.subject}-${index}`}><b>{mail.subject}</b><span>{mail.sender}</span><time>{mail.sent_at ? new Date(mail.sent_at).toLocaleString() : "时间未知"}</time></article>) : <p className="empty">暂无关联邮件。</p>}</section></div>
     </div>
