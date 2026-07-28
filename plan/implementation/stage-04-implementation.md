@@ -9,6 +9,12 @@
 - Stage 3 Exit Gate 全部通过。
 - Application、Excel、Mail、Job 和 ModelGateway API 稳定。
 
+## Progress
+
+- Stage 4A complete: S4.1 Web shell, S4.2 local settings/secret status,
+  S4.3 editable Tracker/Application Detail, and S4.7 Jobs UI.
+- Next: Stage 4B Markdown and manual Summary, then Stage 4C Docker acceptance.
+
 ## Work Packages
 
 ### S4.1 React 应用壳

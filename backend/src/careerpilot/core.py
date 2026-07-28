@@ -225,6 +225,7 @@ class ApplicationService:
         idempotency_key: str,
         application_id: UUID | None = None,
         values: dict[str, Any] | None = None,
+        user_fields: list[str] | None = None,
     ) -> Application:
         with self.database.session() as session:
             existing = session.scalar(
@@ -244,7 +245,7 @@ class ApplicationService:
                 company=company,
                 role=role,
                 values=normalized,
-                user_fields=[],
+                user_fields=user_fields or [],
             )
             session.add(record)
             return _application(record)
@@ -338,6 +339,55 @@ class ApplicationService:
                 {"value": record.value, "source": record.source, "evidence": record.evidence}
                 for record in records
             ]
+
+    def details(self, application_id: UUID) -> dict[str, list[dict[str, Any]]]:
+        with self.database.session() as session:
+            if not session.get(ApplicationRecord, str(application_id)):
+                raise KeyError(application_id)
+            events = session.scalars(
+                select(ApplicationEventRecord)
+                .where(ApplicationEventRecord.application_id == str(application_id))
+                .order_by(desc(ApplicationEventRecord.created_at))
+            )
+            provenance = session.scalars(
+                select(ProvenanceRecord)
+                .where(ProvenanceRecord.application_id == str(application_id))
+                .order_by(desc(ProvenanceRecord.created_at))
+            )
+            emails = session.scalars(
+                select(EmailRecord)
+                .where(EmailRecord.application_id == str(application_id))
+                .order_by(desc(EmailRecord.sent_at))
+            )
+            return {
+                "timeline": [
+                    {
+                        "event_type": item.event_type,
+                        "payload": item.payload,
+                        "created_at": item.created_at.isoformat(),
+                    }
+                    for item in events
+                ],
+                "provenance": [
+                    {
+                        "field": item.field,
+                        "value": item.value,
+                        "source": item.source,
+                        "evidence": item.evidence,
+                        "created_at": item.created_at.isoformat(),
+                    }
+                    for item in provenance
+                ],
+                "emails": [
+                    {
+                        "subject": item.subject,
+                        "sender": item.sender,
+                        "sent_at": item.sent_at.isoformat() if item.sent_at else None,
+                        "evidence": item.evidence,
+                    }
+                    for item in emails
+                ],
+            }
 
     def latest_user_change(self, application_id: UUID, field: str) -> datetime | None:
         with self.database.session() as session:
@@ -559,6 +609,13 @@ class JobService:
             if not record:
                 raise KeyError(job_id)
             return self._view(session, record)
+
+    def list(self) -> list[PersistentJob]:
+        with self.database.session() as session:
+            records = session.scalars(
+                select(BackgroundJobRecord).order_by(desc(BackgroundJobRecord.created_at))
+            )
+            return [self._view(session, record) for record in records]
 
     def complete(self, job_id: UUID, payload: dict[str, Any]) -> PersistentJob:
         self.progress(job_id, "completed", payload)

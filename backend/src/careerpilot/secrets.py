@@ -13,6 +13,12 @@ class WindowsSecretStore:
     def set(self, account_id: str, email: str, value: str) -> None:
         keyring.set_password(f"{self.prefix}/{account_id}", email, value)
 
+    def get_named(self, name: str) -> str | None:
+        return keyring.get_password(f"CareerPilot/{name}", "credential")
+
+    def set_named(self, name: str, value: str) -> None:
+        keyring.set_password(f"CareerPilot/{name}", "credential", value)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Store a 163 client authorization code")

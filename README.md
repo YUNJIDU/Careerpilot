@@ -1,12 +1,12 @@
 # CareerPilot
 
-Local-first job application assistant. Stage 0–1 includes the API health
-boundary and a safe, database-independent Excel tracker engine.
+Local-first job application assistant with a Web tracker, read-only mail sync,
+Excel reconciliation, evidence timelines, and recoverable jobs.
 
 ## Project status
 
-- Completed: Stage 0–3
-- Next: Stage 4 — local Web, Markdown, and manual Summary
+- Completed: Stage 0–3 and Stage 4A Web workspace
+- Next: Stage 4B — Markdown and manual Summary
 - Planned: Stage 0–8
 
 Start with the [execution handoff](plan/EXECUTION-HANDOFF.md), then use the
@@ -35,6 +35,11 @@ npm run dev
 The frontend runs at `http://127.0.0.1:9999` and calls the backend at
 `http://127.0.0.1:9998`.
 
+The Web workspace provides Overview, Applications, Application Detail, Mail,
+Excel, Jobs, and Settings pages. Non-secret settings are stored in
+`data/settings.json`; secret inputs are write-only and stored in Windows
+Credential Manager.
+
 ## 163 mail sync
 
 Store the client authorization code in Windows Credential Manager without
@@ -56,5 +61,5 @@ The mailbox adapter uses IMAP TLS, identifies the client to 163, selects
 `INBOX` read-only, and fetches with `BODY.PEEK[]`. Runtime output is written to
 `data/careerpilot.db` and `data/tracker.xlsx`.
 
-Runtime data belongs in `data/` and must not be committed. Docker support is
-deferred to Stage 4.
+Runtime data belongs in `data/` and must not be committed. Markdown/Summary and
+Docker support are delivered in Stage 4B and 4C.

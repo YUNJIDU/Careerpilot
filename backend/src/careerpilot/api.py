@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
 from fastapi import FastAPI, HTTPException
@@ -14,14 +15,16 @@ from careerpilot.core import (
     JobService,
     upgrade_database,
 )
+from careerpilot.excel import COLUMNS
 from careerpilot.mail import Imap163Adapter, MailAdapter, MailSyncError, MailSyncService
 from careerpilot.secrets import WindowsSecretStore
 from careerpilot.security import safe_path
+from careerpilot.settings import LocalSettings, SettingsStore
 
 
 class ExcelSyncRequest(BaseModel):
     path: str = "data/tracker.xlsx"
-    direction: str = "import"
+    direction: Literal["import", "export"] = "import"
     idempotency_key: str
 
 
@@ -39,6 +42,25 @@ class MailSyncRequest(MailAccountRequest):
     idempotency_key: str
 
 
+class ApplicationCreateRequest(BaseModel):
+    company: str = Field(min_length=1, max_length=200)
+    role: str = Field(min_length=1, max_length=200)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    values: dict[str, object] = Field(default_factory=dict)
+
+
+class ApplicationPatchRequest(BaseModel):
+    changes: dict[str, object]
+    expected_version: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+
+class SettingsUpdateRequest(LocalSettings):
+    mail_secret: str | None = Field(default=None, min_length=1)
+    model_secret: str | None = Field(default=None, min_length=1)
+    brave_secret: str | None = Field(default=None, min_length=1)
+
+
 def create_app(
     frontend_origin: str = "http://127.0.0.1:9999",
     data_dir: Path = Path("data"),
@@ -49,10 +71,11 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[frontend_origin],
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "PUT", "PATCH"],
         allow_headers=["*"],
     )
     data_dir = data_dir.resolve()
+    data_dir.mkdir(parents=True, exist_ok=True)
     upgrade_database(data_dir / "careerpilot.db")
     database = Database(data_dir / "careerpilot.db")
     applications = ApplicationService(database)
@@ -60,6 +83,28 @@ def create_app(
     jobs = JobService(database)
     mail = MailSyncService(database)
     secret_store = secret_store or WindowsSecretStore()
+    settings = SettingsStore(data_dir)
+
+    def application_view(item: object) -> dict[str, object]:
+        return {
+            "application_id": str(item.application_id),
+            "company": item.company,
+            "role": item.role,
+            "values": item.values,
+            "version": item.version,
+        }
+
+    def job_view(job: object) -> dict[str, object]:
+        return {
+            "job_id": str(job.job_id),
+            "job_type": job.job_type,
+            "status": job.status,
+            "current_step": job.current_step,
+            "checkpoint": job.checkpoint,
+            "error_code": job.error_code,
+            "error_message_safe": job.error_message_safe,
+            "retryable": job.job_type == "mail_sync" and job.status == "failed",
+        }
 
     @app.get("/api/v1/health")
     def health() -> dict[str, str]:
@@ -67,16 +112,72 @@ def create_app(
 
     @app.get("/api/v1/applications")
     def list_applications() -> list[dict[str, object]]:
-        return [
-            {
-                "application_id": str(item.application_id),
-                "company": item.company,
-                "role": item.role,
-                "values": item.values,
-                "version": item.version,
-            }
-            for item in applications.list()
-        ]
+        return [application_view(item) for item in applications.list()]
+
+    @app.post("/api/v1/applications", status_code=201)
+    def create_application(request: ApplicationCreateRequest) -> dict[str, object]:
+        company, role = request.company.strip(), request.role.strip()
+        if not company or not role:
+            raise HTTPException(status_code=422, detail="company and role are required")
+        unknown = set(request.values) - set(COLUMNS)
+        if unknown:
+            raise HTTPException(
+                status_code=422, detail=f"unknown tracker fields: {', '.join(sorted(unknown))}"
+            )
+        item = applications.create(
+            company,
+            role,
+            idempotency_key=request.idempotency_key,
+            values=request.values,
+            user_fields=[
+                "公司名称",
+                "岗位",
+                *[
+                    field
+                    for field, value in request.values.items()
+                    if value not in (None, "")
+                ],
+            ],
+        )
+        return application_view(item)
+
+    @app.get("/api/v1/applications/{application_id}")
+    def get_application(application_id: UUID) -> dict[str, object]:
+        try:
+            item = applications.get(application_id)
+            details = applications.details(application_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="application not found") from exc
+        return {**application_view(item), **details}
+
+    @app.patch("/api/v1/applications/{application_id}")
+    def update_application(
+        application_id: UUID, request: ApplicationPatchRequest
+    ) -> dict[str, object]:
+        try:
+            item = applications.get(application_id)
+            unknown = set(request.changes) - set(COLUMNS)
+            if unknown:
+                raise ValueError(
+                    f"unknown tracker fields: {', '.join(sorted(unknown))}"
+                )
+            version = request.expected_version
+            for field, value in request.changes.items():
+                item = applications.apply_field_change(
+                    application_id,
+                    field,
+                    value,
+                    source="user",
+                    idempotency_key=f"{request.idempotency_key}:{field}",
+                    expected_version=version,
+                )
+                version = item.version
+            return application_view(item)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="application not found") from exc
+        except ValueError as exc:
+            status = 409 if "version conflict" in str(exc) else 422
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
 
     @app.post("/api/v1/excel-sync-jobs")
     def excel_sync(request: ExcelSyncRequest) -> dict[str, object]:
@@ -87,26 +188,59 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if request.direction == "import":
             count = excel.import_workbook(path, request.idempotency_key)
-            jobs.progress(job.job_id, "completed", {"rows": count})
+            jobs.complete(job.job_id, {"rows": count})
         elif request.direction == "export":
             excel.export_workbook(path)
-            jobs.progress(job.job_id, "completed", {"path": str(path)})
-        else:
-            raise ValueError("direction must be import or export")
+            jobs.complete(job.job_id, {"path": str(path)})
         return {"job_id": str(job.job_id)}
+
+    @app.get("/api/v1/jobs")
+    def list_jobs() -> list[dict[str, object]]:
+        return [job_view(job) for job in jobs.list()]
 
     @app.get("/api/v1/jobs/{job_id}")
     def get_job(job_id: UUID) -> dict[str, object]:
-        job = jobs.get(job_id)
+        try:
+            return job_view(jobs.get(job_id))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="job not found") from exc
+
+    def named_secret(name: str) -> str | None:
+        getter = getattr(secret_store, "get_named", None)
+        return getter(name) if getter else None
+
+    @app.get("/api/v1/settings")
+    def get_settings() -> dict[str, object]:
+        current = settings.load()
         return {
-            "job_id": str(job.job_id),
-            "job_type": job.job_type,
-            "status": job.status,
-            "current_step": job.current_step,
-            "checkpoint": job.checkpoint,
-            "error_code": job.error_code,
-            "error_message_safe": job.error_message_safe,
+            **current.model_dump(),
+            "mail_secret_saved": bool(
+                current.email and secret_store.get(current.account_id, current.email)
+            ),
+            "model_secret_saved": bool(named_secret("model")),
+            "brave_secret_saved": bool(named_secret("brave")),
         }
+
+    @app.put("/api/v1/settings")
+    def update_settings(request: SettingsUpdateRequest) -> dict[str, object]:
+        setter = getattr(secret_store, "set_named", None)
+        if (request.model_secret or request.brave_secret) and not setter:
+            raise HTTPException(status_code=501, detail="named secret storage unavailable")
+        values = request.model_dump(
+            exclude={"mail_secret", "model_secret", "brave_secret"}
+        )
+        try:
+            current = settings.save(values)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if request.mail_secret:
+            secret_store.set(current.account_id, current.email, request.mail_secret)
+        if request.model_secret or request.brave_secret:
+            if request.model_secret:
+                setter("model", request.model_secret)
+            if request.brave_secret:
+                setter("brave", request.brave_secret)
+        return get_settings()
 
     def adapter(request: MailAccountRequest) -> MailAdapter:
         authorization_code = secret_store.get(request.account_id, request.email)
@@ -133,6 +267,7 @@ def create_app(
 
     @app.post("/api/v1/mail-sync-jobs")
     def mail_sync(request: MailSyncRequest) -> dict[str, object]:
+        job = jobs.create("mail_sync", request.idempotency_key)
         try:
             tracker_path = safe_path(data_dir, Path(request.tracker_path))
         except ValueError as exc:
@@ -152,7 +287,7 @@ def create_app(
                 status_code=502,
                 detail={"code": "mail.sync_failed", "job_id": str(exc.job_id)},
             ) from exc
-        return {"processed": processed}
+        return {"job_id": str(job.job_id), "processed": processed}
 
     @app.post("/api/v1/jobs/{job_id}/resume")
     def resume_mail_job(job_id: UUID) -> dict[str, object]:

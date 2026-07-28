@@ -451,7 +451,8 @@ def test_mail_connection_and_sync_api(tmp_path: Path) -> None:
             "idempotency_key": "api-mail-sync",
         },
     )
-    assert response.json() == {"processed": 1}
+    assert response.json()["processed"] == 1
+    assert response.json()["job_id"]
     assert client.get("/api/v1/applications").json()[0]["company"] == "API Co"
 
 

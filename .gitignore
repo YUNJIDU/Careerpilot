@@ -7,6 +7,7 @@ __pycache__/
 node_modules/
 dist/
 .superpowers/
+.playwright-cli/
 *.egg-info/
 *.tsbuildinfo
 data/*
