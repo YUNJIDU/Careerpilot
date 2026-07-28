@@ -49,6 +49,29 @@ export type Settings = {
   brave_secret_saved: boolean;
 };
 
+export type SummarySource = {
+  url: string;
+  title: string;
+  fetched_at: string;
+};
+
+export type Summary = {
+  summary_id: string;
+  application_id: string;
+  version: number;
+  created_at: string;
+  content: {
+    overview: string;
+    jd_highlights: string[];
+    process_clues: string[];
+    written_test: string[];
+    interview: string[];
+    known_facts: string[];
+    unknowns: string[];
+    sources: SummarySource[];
+  };
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}${path}`, {
     ...init,
@@ -83,6 +106,16 @@ export const api = {
         idempotency_key: crypto.randomUUID(),
       }),
     }),
+  summaries: (id: string) => request<Summary[]>(`/applications/${id}/summaries`),
+  generateSummary: (id: string) =>
+    request<{ job_id: string; summary: Summary }>(`/applications/${id}/summary-jobs`, {
+      method: "POST",
+      body: JSON.stringify({
+        idempotency_key: crypto.randomUUID(),
+        data_leaving_confirmed: true,
+      }),
+    }),
+  markdownUrl: (id: string) => `${API}/applications/${id}/markdown`,
   jobs: () => request<Job[]>("/jobs"),
   resumeJob: (id: string) =>
     request<{ job_id: string; processed: number }>(`/jobs/${id}/resume`, { method: "POST" }),

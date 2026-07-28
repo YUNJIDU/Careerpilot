@@ -80,3 +80,26 @@ class Job(StrictModel):
     retry_count: int = 0
     processor_version: str = "1.0"
 
+
+class SummarySource(StrictModel):
+    url: str = Field(max_length=2000)
+    title: str = Field(max_length=500)
+    fetched_at: datetime
+
+    @field_validator("fetched_at")
+    @classmethod
+    def source_timezone_required(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("timezone is required")
+        return value
+
+
+class SummaryContent(StrictModel):
+    overview: str = Field(max_length=5000)
+    jd_highlights: list[str] = Field(default_factory=list, max_length=20)
+    process_clues: list[str] = Field(default_factory=list, max_length=20)
+    written_test: list[str] = Field(default_factory=list, max_length=20)
+    interview: list[str] = Field(default_factory=list, max_length=20)
+    known_facts: list[str] = Field(default_factory=list, max_length=30)
+    unknowns: list[str] = Field(default_factory=list, max_length=30)
+    sources: list[SummarySource] = Field(min_length=1, max_length=5)

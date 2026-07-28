@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { api, Application, ApplicationDetail, Job, Settings } from "./api";
+import { api, Application, ApplicationDetail, Job, Settings, Summary } from "./api";
 
 type Page = "overview" | "applications" | "detail" | "mail" | "excel" | "jobs" | "settings";
 
@@ -111,14 +111,18 @@ function ApplicationsPage({ onChanged }: { onChanged: () => void }) {
 
 function DetailPage({ id, onChanged }: { id: string; onChanged: () => void }) {
   const [detail, setDetail] = useState<ApplicationDetail | null>(null);
+  const [summaries, setSummaries] = useState<Summary[]>([]);
   const [values, setValues] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
   const [closeStep, setCloseStep] = useState("笔试");
   const [closeReason, setCloseReason] = useState("未通过");
+  const [dataLeavingConfirmed, setDataLeavingConfirmed] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const load = async () => {
     try {
-      const item = await api.application(id); setDetail(item);
+      const [item, versions] = await Promise.all([api.application(id), api.summaries(id)]);
+      setDetail(item); setSummaries(versions);
       setValues(Object.fromEntries(EDITABLE_FIELDS.map((field) => [field, String(item.values[field] ?? "")])));
     } catch (value) { setError(String(value)); }
   };
@@ -151,6 +155,16 @@ function DetailPage({ id, onChanged }: { id: string; onChanged: () => void }) {
       setSaved("已记录结束环节和结果。"); await load(); onChanged();
     } catch (value) { setError(String(value)); }
   };
+  const generateSummary = async () => {
+    if (!dataLeavingConfirmed) return;
+    setGenerating(true); setError(""); setSaved("");
+    try {
+      const result = await api.generateSummary(id);
+      setSaved(`Summary v${result.summary.version} 已生成，并已更新 Markdown。`);
+      setDataLeavingConfirmed(false); await load(); onChanged();
+    } catch (value) { setError(String(value)); }
+    finally { setGenerating(false); }
+  };
   if (!detail) return <>{error ? <Notice kind="error">{error}</Notice> : <p className="empty">正在读取申请详情…</p>}</>;
   const stage = displayStage(detail.values);
   const terminal = TERMINAL_PATTERN.test(stage);
@@ -166,7 +180,23 @@ function DetailPage({ id, onChanged }: { id: string; onChanged: () => void }) {
       <div><section className="panel"><h2>时间线</h2>{detail.timeline.length ? <ol className="timeline">{detail.timeline.map((item, index) => <li key={`${item.created_at}-${index}`}><b>{String(item.payload.field ?? item.event_type)}</b><span>{String(item.payload.value ?? "")}</span><time>{new Date(item.created_at).toLocaleString()}</time></li>)}</ol> : <p className="empty">暂无时间线。</p>}</section>
       <section className="panel"><h2>邮件证据</h2>{detail.emails.length ? detail.emails.map((mail, index) => <article className="evidence" key={`${mail.subject}-${index}`}><b>{mail.subject}</b><span>{mail.sender}</span><time>{mail.sent_at ? new Date(mail.sent_at).toLocaleString() : "时间未知"}</time></article>) : <p className="empty">暂无关联邮件。</p>}</section></div>
     </div>
+    <section className="panel summary-panel"><div className="section-title"><div><h2>公开信息 Summary</h2><p>手动调用 Brave Top 5 和已配置模型；结果仅供信息整理。</p></div>{summaries.length > 0 && <a className="button" href={api.markdownUrl(id)} target="_blank" rel="noreferrer">查看 Markdown</a>}</div>
+      <div className="data-warning"><strong>数据将离开本机</strong><p>公司、职位、现有客观邮件证据及公开网页正文会发送给已配置的模型服务。不会发送邮箱或 API 密钥。</p><label className="checkbox"><input type="checkbox" checked={dataLeavingConfirmed} onChange={(event) => setDataLeavingConfirmed(event.target.checked)} />我了解并确认本次调用</label><button className="button primary" disabled={!dataLeavingConfirmed || generating} onClick={() => void generateSummary()}>{generating ? "正在搜索并生成…" : "生成新 Summary"}</button></div>
+      {summaries.length ? <SummaryView summary={summaries[0]} versions={summaries} /> : <p className="empty">尚未生成 Summary。</p>}
+    </section>
   </>;
+}
+
+function SummaryView({ summary, versions }: { summary: Summary; versions: Summary[] }) {
+  const sections: Array<[string, string[]]> = [
+    ["JD 要点", summary.content.jd_highlights],
+    ["流程线索", summary.content.process_clues],
+    ["笔试信息", summary.content.written_test],
+    ["面试信息", summary.content.interview],
+    ["已知事实", summary.content.known_facts],
+    ["未知与不确定项", summary.content.unknowns],
+  ];
+  return <article className="summary-result"><div className="summary-meta"><span className="badge">最新版本 v{summary.version}</span><span>{new Date(summary.created_at).toLocaleString()}</span><span>历史版本：{versions.map((item) => `v${item.version}`).join("、")}</span></div><p className="summary-overview">{summary.content.overview}</p><div className="summary-grid">{sections.map(([title, items]) => <section key={title}><h3>{title}</h3>{items.length ? <ul>{items.map((item, index) => <li key={`${title}-${index}`}>{item}</li>)}</ul> : <p>暂无信息</p>}</section>)}</div><h3>来源</h3><ol className="sources">{summary.content.sources.map((source) => <li key={source.url}><a href={source.url} target="_blank" rel="noreferrer">{source.title}</a><time>{new Date(source.fetched_at).toLocaleString()}</time></li>)}</ol></article>;
 }
 
 function MailPage({ settings, onDone }: { settings: Settings | null; onDone: () => void }) {

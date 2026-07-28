@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from careerpilot.core import (
@@ -13,13 +14,25 @@ from careerpilot.core import (
     Database,
     ExcelSyncService,
     JobService,
+    SummaryRepository,
     upgrade_database,
 )
 from careerpilot.excel import COLUMNS
 from careerpilot.mail import Imap163Adapter, MailAdapter, MailSyncError, MailSyncService
+from careerpilot.markdown import MarkdownRenderer
 from careerpilot.secrets import WindowsSecretStore
 from careerpilot.security import safe_path
 from careerpilot.settings import LocalSettings, SettingsStore
+from careerpilot.summary import (
+    BraveSearchClient,
+    ModelClient,
+    OpenAICompatibleModelClient,
+    PageFetcher,
+    PublicPageFetcher,
+    SearchClient,
+    SummaryJobError,
+    SummaryService,
+)
 
 
 class ExcelSyncRequest(BaseModel):
@@ -61,11 +74,19 @@ class SettingsUpdateRequest(LocalSettings):
     brave_secret: str | None = Field(default=None, min_length=1)
 
 
+class SummaryJobRequest(BaseModel):
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    data_leaving_confirmed: bool
+
+
 def create_app(
     frontend_origin: str = "http://127.0.0.1:9999",
     data_dir: Path = Path("data"),
     secret_store: WindowsSecretStore | None = None,
     mail_adapter_factory: Callable[..., MailAdapter] = Imap163Adapter,
+    search_client: SearchClient | None = None,
+    page_fetcher: PageFetcher | None = None,
+    model_client: ModelClient | None = None,
 ) -> FastAPI:
     app = FastAPI(title="CareerPilot", version="0.1.0")
     app.add_middleware(
@@ -84,6 +105,9 @@ def create_app(
     mail = MailSyncService(database)
     secret_store = secret_store or WindowsSecretStore()
     settings = SettingsStore(data_dir)
+    search_client = search_client or BraveSearchClient()
+    page_fetcher = page_fetcher or PublicPageFetcher()
+    model_client = model_client or OpenAICompatibleModelClient()
 
     def application_view(item: object) -> dict[str, object]:
         return {
@@ -95,15 +119,25 @@ def create_app(
         }
 
     def job_view(job: object) -> dict[str, object]:
+        checkpoint = job.checkpoint
+        if job.job_type == "summary" and checkpoint:
+            checkpoint = {
+                "application_id": checkpoint.get("application_id"),
+                "search_result_count": len(checkpoint.get("search_results", [])),
+                "source_count": len(checkpoint.get("sources", [])),
+                "summary_version": checkpoint.get("summary_version"),
+                "rendered_path": checkpoint.get("rendered_path"),
+            }
         return {
             "job_id": str(job.job_id),
             "job_type": job.job_type,
             "status": job.status,
             "current_step": job.current_step,
-            "checkpoint": job.checkpoint,
+            "checkpoint": checkpoint,
             "error_code": job.error_code,
             "error_message_safe": job.error_message_safe,
-            "retryable": job.job_type == "mail_sync" and job.status == "failed",
+            "retryable": job.job_type in {"mail_sync", "summary"}
+            and job.status == "failed",
         }
 
     @app.get("/api/v1/health")
@@ -209,6 +243,39 @@ def create_app(
         getter = getattr(secret_store, "get_named", None)
         return getter(name) if getter else None
 
+    def summary_service() -> tuple[SummaryService, dict[str, object]]:
+        current = settings.load()
+        brave_credential = named_secret("brave")
+        if not brave_credential:
+            raise HTTPException(status_code=400, detail="Brave credential is not stored")
+        if not current.model_base_url or not current.model_name:
+            raise HTTPException(status_code=400, detail="model endpoint is not configured")
+        markdown_directory = safe_path(data_dir, Path(current.markdown_path))
+        return (
+            SummaryService(
+                database,
+                search_client=search_client,
+                page_fetcher=page_fetcher,
+                model_client=model_client,
+                renderer=MarkdownRenderer(database, markdown_directory),
+            ),
+            {
+                "brave_credential": brave_credential,
+                "model_base_url": current.model_base_url,
+                "model_name": current.model_name,
+                "model_credential": named_secret("model"),
+            },
+        )
+
+    def summary_view(item: object) -> dict[str, object]:
+        return {
+            "summary_id": str(item.summary_id),
+            "application_id": str(item.application_id),
+            "version": item.version,
+            "content": item.content,
+            "created_at": item.created_at.isoformat(),
+        }
+
     @app.get("/api/v1/settings")
     def get_settings() -> dict[str, object]:
         current = settings.load()
@@ -241,6 +308,52 @@ def create_app(
             if request.brave_secret:
                 setter("brave", request.brave_secret)
         return get_settings()
+
+    @app.post("/api/v1/applications/{application_id}/summary-jobs")
+    def generate_summary(
+        application_id: UUID, request: SummaryJobRequest
+    ) -> dict[str, object]:
+        if not request.data_leaving_confirmed:
+            raise HTTPException(status_code=422, detail="data leaving must be confirmed")
+        try:
+            applications.get(application_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="application not found") from exc
+        service, configuration = summary_service()
+        try:
+            job, summary = service.run(
+                application_id,
+                idempotency_key=request.idempotency_key,
+                **configuration,
+            )
+        except SummaryJobError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "summary.failed", "job_id": str(exc.job_id)},
+            ) from exc
+        return {"job_id": str(job.job_id), "summary": summary_view(summary)}
+
+    @app.get("/api/v1/applications/{application_id}/summaries")
+    def list_summaries(application_id: UUID) -> list[dict[str, object]]:
+        try:
+            applications.get(application_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="application not found") from exc
+        return [
+            summary_view(item)
+            for item in SummaryRepository(database).list(application_id)
+        ]
+
+    @app.get(
+        "/api/v1/applications/{application_id}/markdown",
+        response_class=PlainTextResponse,
+    )
+    def get_markdown(application_id: UUID) -> str:
+        current = settings.load()
+        path = safe_path(data_dir, Path(current.markdown_path)) / f"{application_id}.md"
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Markdown is not generated")
+        return path.read_text(encoding="utf-8")
 
     def adapter(request: MailAccountRequest) -> MailAdapter:
         authorization_code = secret_store.get(request.account_id, request.email)
@@ -290,13 +403,37 @@ def create_app(
         return {"job_id": str(job.job_id), "processed": processed}
 
     @app.post("/api/v1/jobs/{job_id}/resume")
-    def resume_mail_job(job_id: UUID) -> dict[str, object]:
+    def resume_job(job_id: UUID) -> dict[str, object]:
         try:
             failed = jobs.get(job_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="job not found") from exc
-        if failed.job_type != "mail_sync" or failed.status != "failed":
+        if failed.status != "failed" or failed.job_type not in {"mail_sync", "summary"}:
             raise HTTPException(status_code=409, detail="job is not resumable")
+        if failed.job_type == "summary":
+            checkpoint = failed.checkpoint or {}
+            try:
+                application_id = UUID(str(checkpoint["application_id"]))
+                service, configuration = summary_service()
+                resumed, summary = service.run(
+                    application_id,
+                    idempotency_key=f"resume:{job_id}",
+                    checkpoint=checkpoint,
+                    **configuration,
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=409, detail="job resume checkpoint is invalid"
+                ) from exc
+            except SummaryJobError as exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail={"code": "summary.failed", "job_id": str(exc.job_id)},
+                ) from exc
+            return {
+                "job_id": str(resumed.job_id),
+                "summary": summary_view(summary),
+            }
         try:
             request = MailSyncRequest(
                 **(failed.checkpoint or {}),
