@@ -245,7 +245,8 @@ _PATTERNS = {
     "JD 链接": re.compile(r"(?:JD\s*链接|职位链接)[：:]\s*(https?://[^\s<]+)"),
 }
 _JOB_KEYWORDS = re.compile(
-    r"招聘|应聘|职位|岗位|面试|笔试|测评|录用|offer|application|interview|assessment",
+    r"招聘|应聘|职位|岗位|简历|筛选|面试|笔试|测评|录用|offer|"
+    r"application|interview|assessment",
     re.IGNORECASE,
 )
 
@@ -316,16 +317,18 @@ def extract_facts(value: str, sender: str = "") -> dict[str, object]:
         if re.search(
             r"很遗憾.{0,40}(?:未通过|无法进入|不能进入)|"
             r"未能通过|不再进入下一轮|不予录用|"
+            r"无法邀请.{0,30}(?:继续参与|进入).{0,20}后续流程|"
             r"(?:招聘|应聘|面试|笔试)?流程.{0,8}(?:终止|结束)",
             text,
         ):
             step = next(
                 (candidate for candidate in reversed(PROCESS_FIELDS) if candidate in text),
-                "流程",
+                "简历通过" if "简历" in text else "流程",
             )
-            facts["当前阶段"] = terminal_label(step, "未通过")
             if step in PROCESS_FIELDS:
                 facts[step] = "未通过"
+            display_step = "简历" if step == "简历通过" else step
+            facts["当前阶段"] = terminal_label(display_step, "未通过")
         elif re.search(r"(?:笔试|考试)成绩.{0,12}(?:查询|公布|发布|开放|可查|已开通)", text):
             facts["当前阶段"] = "笔试成绩可查询"
         elif re.search(r"完善简历", text):
