@@ -25,6 +25,35 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 from careerpilot.excel import COLUMNS, TrackerRow, read_tracker, write_tracker
 
+PROCESS_FIELDS = (
+    "简历通过",
+    "测评",
+    "笔试",
+    "一面",
+    "二面",
+    "三面",
+    "HR 面",
+    "终面",
+)
+_TERMINAL_PATTERN = re.compile(r"未通过|不通过|未能通过|淘汰|拒绝|挂|终止|结束|不合适|遗憾")
+
+
+def terminal_result(field: str, value: Any) -> tuple[str, str] | None:
+    text = str(value or "").strip()
+    if not text or not _TERMINAL_PATTERN.search(text):
+        return None
+    step = field if field in PROCESS_FIELDS else next(
+        (candidate for candidate in reversed(PROCESS_FIELDS) if candidate in text),
+        "流程",
+    )
+    reason = "主动结束" if re.search(r"主动|撤回|放弃", text) else "未通过"
+    return step, reason
+
+
+def terminal_label(step: str, reason: str) -> str:
+    detail = reason if reason == "主动结束" else f"{step}{reason}"
+    return f"已结束（{detail}）"
+
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
@@ -225,6 +254,7 @@ class ApplicationService:
         idempotency_key: str,
         application_id: UUID | None = None,
         values: dict[str, Any] | None = None,
+        user_fields: list[str] | None = None,
     ) -> Application:
         with self.database.session() as session:
             existing = session.scalar(
@@ -238,13 +268,18 @@ class ApplicationService:
                 {field: _json_value(value) for field, value in (values or {}).items()}
             )
             normalized["公司名称"], normalized["岗位"] = company, role
+            for field in PROCESS_FIELDS:
+                terminal = terminal_result(field, normalized.get(field))
+                if terminal:
+                    normalized[field] = terminal[1]
+                    normalized["当前阶段"] = terminal_label(*terminal)
             record = ApplicationRecord(
                 application_id=str(application_id),
                 create_key=idempotency_key,
                 company=company,
                 role=role,
                 values=normalized,
-                user_fields=[],
+                user_fields=user_fields or [],
             )
             session.add(record)
             return _application(record)
@@ -286,6 +321,11 @@ class ApplicationService:
                 raise ValueError("application version conflict")
             if duplicate:
                 return _application(record)
+            terminal = terminal_result(field, value)
+            if field in PROCESS_FIELDS and terminal:
+                value = terminal[1]
+            elif field == "当前阶段" and terminal:
+                value = terminal_label(*terminal)
             session.add(
                 ProvenanceRecord(
                     provenance_id=str(uuid4()),
@@ -315,6 +355,42 @@ class ApplicationService:
             if source in {"user", "mail_authoritative"} or field not in user_fields:
                 updated = dict(record.values)
                 updated[field] = _json_value(value)
+                if (
+                    terminal
+                    and field in PROCESS_FIELDS
+                    and (
+                        source in {"user", "mail_authoritative"}
+                        or "当前阶段" not in user_fields
+                    )
+                ):
+                    stage = terminal_label(*terminal)
+                    updated["当前阶段"] = stage
+                    session.add(
+                        ProvenanceRecord(
+                            provenance_id=str(uuid4()),
+                            application_id=str(application_id),
+                            field="当前阶段",
+                            value=stage,
+                            source=source,
+                            evidence=evidence,
+                            idempotency_key=f"{idempotency_key}:terminal",
+                        )
+                    )
+                    session.add(
+                        ApplicationEventRecord(
+                            event_id=str(uuid4()),
+                            application_id=str(application_id),
+                            event_type="field_change",
+                            payload={
+                                "field": "当前阶段",
+                                "value": stage,
+                                "source": source,
+                            },
+                            idempotency_key=f"event:{idempotency_key}:terminal",
+                        )
+                    )
+                    if source == "user":
+                        user_fields.add("当前阶段")
                 record.values = updated
                 record.user_fields = sorted(user_fields)
                 record.version += 1
@@ -338,6 +414,55 @@ class ApplicationService:
                 {"value": record.value, "source": record.source, "evidence": record.evidence}
                 for record in records
             ]
+
+    def details(self, application_id: UUID) -> dict[str, list[dict[str, Any]]]:
+        with self.database.session() as session:
+            if not session.get(ApplicationRecord, str(application_id)):
+                raise KeyError(application_id)
+            events = session.scalars(
+                select(ApplicationEventRecord)
+                .where(ApplicationEventRecord.application_id == str(application_id))
+                .order_by(desc(ApplicationEventRecord.created_at))
+            )
+            provenance = session.scalars(
+                select(ProvenanceRecord)
+                .where(ProvenanceRecord.application_id == str(application_id))
+                .order_by(desc(ProvenanceRecord.created_at))
+            )
+            emails = session.scalars(
+                select(EmailRecord)
+                .where(EmailRecord.application_id == str(application_id))
+                .order_by(desc(EmailRecord.sent_at))
+            )
+            return {
+                "timeline": [
+                    {
+                        "event_type": item.event_type,
+                        "payload": item.payload,
+                        "created_at": item.created_at.isoformat(),
+                    }
+                    for item in events
+                ],
+                "provenance": [
+                    {
+                        "field": item.field,
+                        "value": item.value,
+                        "source": item.source,
+                        "evidence": item.evidence,
+                        "created_at": item.created_at.isoformat(),
+                    }
+                    for item in provenance
+                ],
+                "emails": [
+                    {
+                        "subject": item.subject,
+                        "sender": item.sender,
+                        "sent_at": item.sent_at.isoformat() if item.sent_at else None,
+                        "evidence": item.evidence,
+                    }
+                    for item in emails
+                ],
+            }
 
     def latest_user_change(self, application_id: UUID, field: str) -> datetime | None:
         with self.database.session() as session:
@@ -412,6 +537,22 @@ class ExcelSyncService:
                         source="user",
                         idempotency_key=f"{idempotency_key}:{target_id}:{field}",
                     )
+            terminal = next(
+                (
+                    terminal_result(field, value)
+                    for field, value in row.values.items()
+                    if terminal_result(field, value)
+                ),
+                None,
+            )
+            if terminal:
+                self.applications.apply_field_change(
+                    target_id,
+                    "当前阶段",
+                    terminal_label(*terminal),
+                    source="user",
+                    idempotency_key=f"{idempotency_key}:{target_id}:terminal",
+                )
         return len(rows)
 
     def export_workbook(self, path: Path) -> Path:
@@ -559,6 +700,13 @@ class JobService:
             if not record:
                 raise KeyError(job_id)
             return self._view(session, record)
+
+    def list(self) -> list[PersistentJob]:
+        with self.database.session() as session:
+            records = session.scalars(
+                select(BackgroundJobRecord).order_by(desc(BackgroundJobRecord.created_at))
+            )
+            return [self._view(session, record) for record in records]
 
     def complete(self, job_id: UUID, payload: dict[str, Any]) -> PersistentJob:
         self.progress(job_id, "completed", payload)
