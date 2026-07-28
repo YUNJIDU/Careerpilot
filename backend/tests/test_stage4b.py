@@ -1,3 +1,5 @@
+import json
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -12,6 +14,7 @@ from careerpilot.core import (
 )
 from careerpilot.markdown import MarkdownRenderer
 from careerpilot.summary import (
+    OpenAICompatibleModelClient,
     SearchResult,
     SummaryJobError,
     SummaryService,
@@ -97,6 +100,55 @@ class FakeModel:
             "known_facts": ["Evidence-backed fact"],
             "unknowns": ["Exact current process is unknown"],
         }
+
+
+class FakeResponse:
+    def __init__(self, content: str = '{"overview":"ok"}') -> None:
+        self.content = content
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args) -> None:
+        return None
+
+    def read(self, limit: int) -> bytes:
+        return json.dumps(
+            {"choices": [{"message": {"content": self.content}}]}
+        ).encode()
+
+
+@pytest.mark.parametrize(
+    ("model", "has_thinking"),
+    [("deepseek-v4-flash", True), ("generic-model", False)],
+)
+def test_model_request_has_exact_contract_and_provider_option(
+    monkeypatch: pytest.MonkeyPatch, model: str, has_thinking: bool
+) -> None:
+    captured: dict = {}
+
+    def fake_urlopen(request, timeout: int):
+        captured.update(json.loads(request.data))
+        return FakeResponse()
+
+    monkeypatch.setattr("careerpilot.summary.urlopen", fake_urlopen)
+    OpenAICompatibleModelClient().generate(
+        {
+            "application": {"company": "Acme"},
+            "mail_evidence": [{"sent_at": datetime(2026, 7, 28, tzinfo=UTC)}],
+        },
+        base_url="https://model.example/v1",
+        model=model,
+        credential="secret",
+    )
+    prompt = captured["messages"][1]["content"]
+    assert '"overview": "string"' in prompt
+    assert '"jd_highlights": ["string"]' in prompt
+    assert "2026-07-28 00:00:00+00:00" in prompt
+    assert ("thinking" in captured) is has_thinking
+    assert captured.get("thinking") == (
+        {"type": "disabled"} if has_thinking else None
+    )
 
 
 @pytest.mark.parametrize("url", ["file:///etc/passwd", "http://127.0.0.1/private"])
@@ -231,6 +283,41 @@ def test_failed_summary_resumes_cached_fetch_without_duplicate_version(
     assert fetcher.calls == 5
     assert model.calls == 2
     assert len(client.get(f"/api/v1/applications/{application_id}/summaries").json()) == 1
+
+
+def test_wrong_model_shape_records_safe_category(tmp_path: Path) -> None:
+    class WrongShapeModel(FakeModel):
+        def generate(self, *args, **kwargs) -> dict:
+            return {
+                "overview": "ok",
+                "jd_highlights": "not an array",
+                "process_clues": [],
+                "written_test": [],
+                "interview": [],
+                "known_facts": [],
+                "unknowns": [],
+            }
+
+    secrets = MemorySecrets()
+    client = TestClient(
+        create_app(
+            data_dir=tmp_path,
+            secret_store=secrets,
+            search_client=FakeSearch(),
+            page_fetcher=FakeFetcher(),
+            model_client=WrongShapeModel(),
+        )
+    )
+    configure(client)
+    application_id = create_application(client)
+    response = client.post(
+        f"/api/v1/applications/{application_id}/summary-jobs",
+        json={"idempotency_key": "bad-shape", "data_leaving_confirmed": True},
+    )
+    job = client.get(f"/api/v1/jobs/{response.json()['detail']['job_id']}").json()
+    assert job["error_code"] == "summary.model_schema"
+    assert job["error_message_safe"] == "Summary generation failed (model_schema)."
+    assert "not an array" not in str(job)
 
 
 def test_render_failure_resume_reuses_stored_version(tmp_path: Path) -> None:
