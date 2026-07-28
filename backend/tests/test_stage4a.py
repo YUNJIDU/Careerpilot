@@ -12,7 +12,7 @@ from careerpilot.core import (
     ExcelSyncService,
 )
 from careerpilot.excel import COLUMNS, TrackerRow, write_tracker
-from careerpilot.mail import extract_facts
+from careerpilot.mail import MailItem, extract_facts, is_job_candidate
 
 
 class MemorySecrets:
@@ -244,3 +244,24 @@ def test_terminal_result_is_consistent_for_web_excel_and_mail(tmp_path: Path) ->
     assert extract_facts(
         "Closed Co 笔试结果\n很遗憾地通知您，您未能通过本次笔试。"
     )["当前阶段"] == "已结束（笔试未通过）"
+
+
+def test_resume_rejection_wording_is_recognized() -> None:
+    text = (
+        "非常感谢投递蔚来校园招聘-提前批-算法工程师职位。\n"
+        "在认真阅读你的申请信息和简历后，遗憾地通知你我们暂时无法邀请你"
+        "继续参与该职位的后续流程。"
+    )
+    item = MailItem(
+        message_id="<resume-rejection@example>",
+        sender="蔚来招聘 <jobs@example.com>",
+        subject="申请进展通知",
+        sent_at=datetime(2026, 7, 28, tzinfo=UTC),
+        text=text,
+        raw_hash="f" * 64,
+    )
+
+    assert is_job_candidate(item)
+    facts = extract_facts(text, item.sender)
+    assert facts["当前阶段"] == "已结束（简历未通过）"
+    assert facts["简历通过"] == "未通过"
