@@ -5,8 +5,8 @@ Excel reconciliation, evidence timelines, and recoverable jobs.
 
 ## Project status
 
-- Completed: Stage 0–3 and Stage 4A Web workspace
-- Next: Stage 4B — Markdown and manual Summary
+- Completed: Stage 0–3 and Stage 4A–4B Web workspace, Markdown, and manual Summary
+- Next: Stage 4C — Docker first-release acceptance
 - Planned: Stage 0–8
 
 Start with the [execution handoff](plan/EXECUTION-HANDOFF.md), then use the
@@ -44,6 +44,17 @@ Terminal results are shown as `已结束（<环节>未通过）`. Existing value
 `笔试挂` are recognized immediately; Web, Excel, and mail updates use the same
 normalization while preserving the timeline.
 
+## Manual Summary
+
+In Settings, save a Brave Search API key plus an OpenAI-compatible model
+endpoint, model name, and optional model API key. On an application detail
+page, confirm that data may leave the machine and choose **生成新 Summary**.
+
+Each run searches two focused queries, keeps the first five unique public
+sources, writes an immutable Summary version, and atomically refreshes
+`data/markdown/<application-id>.md`. Failed jobs can resume from their latest
+checkpoint without repeating completed search or fetch work.
+
 ## 163 mail sync
 
 Store the client authorization code in Windows Credential Manager without
@@ -65,5 +76,5 @@ The mailbox adapter uses IMAP TLS, identifies the client to 163, selects
 `INBOX` read-only, and fetches with `BODY.PEEK[]`. Runtime output is written to
 `data/careerpilot.db` and `data/tracker.xlsx`.
 
-Runtime data belongs in `data/` and must not be committed. Markdown/Summary and
-Docker support are delivered in Stage 4B and 4C.
+Runtime data belongs in `data/` and must not be committed. Docker support is
+delivered in Stage 4C.

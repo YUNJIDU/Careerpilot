@@ -16,6 +16,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     create_engine,
     desc,
     or_,
@@ -172,6 +173,16 @@ class JobCheckpointRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class SummaryVersionRecord(Base):
+    __tablename__ = "summary_versions"
+    __table_args__ = (UniqueConstraint("application_id", "version"),)
+    summary_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    application_id: Mapped[str] = mapped_column(ForeignKey("applications.application_id"))
+    version: Mapped[int] = mapped_column(Integer)
+    content: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Database:
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -230,6 +241,15 @@ class StoredEmail:
     application_id: UUID
     sent_at: datetime
     facts: dict[str, Any]
+
+
+@dataclass
+class SummaryVersion:
+    summary_id: UUID
+    application_id: UUID
+    version: int
+    content: dict[str, Any]
+    created_at: datetime
 
 
 def _application(record: ApplicationRecord) -> Application:
@@ -744,4 +764,54 @@ class JobService:
             checkpoint=dict(checkpoint.payload) if checkpoint else None,
             error_code=record.error_code,
             error_message_safe=record.error_message_safe,
+        )
+
+
+class SummaryRepository:
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def append(self, application_id: UUID, content: dict[str, Any]) -> SummaryVersion:
+        with self.database.session() as session:
+            if not session.get(ApplicationRecord, str(application_id)):
+                raise KeyError(application_id)
+            latest = session.scalar(
+                select(SummaryVersionRecord)
+                .where(SummaryVersionRecord.application_id == str(application_id))
+                .order_by(desc(SummaryVersionRecord.version))
+            )
+            record = SummaryVersionRecord(
+                summary_id=str(uuid4()),
+                application_id=str(application_id),
+                version=(latest.version + 1) if latest else 1,
+                content=content,
+            )
+            session.add(record)
+            session.flush()
+            return self._view(record)
+
+    def list(self, application_id: UUID) -> list[SummaryVersion]:
+        with self.database.session() as session:
+            records = session.scalars(
+                select(SummaryVersionRecord)
+                .where(SummaryVersionRecord.application_id == str(application_id))
+                .order_by(desc(SummaryVersionRecord.version))
+            )
+            return [self._view(record) for record in records]
+
+    def latest(self, application_id: UUID) -> SummaryVersion | None:
+        versions = self.list(application_id)
+        return versions[0] if versions else None
+
+    @staticmethod
+    def _view(record: SummaryVersionRecord) -> SummaryVersion:
+        created_at = record.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=UTC)
+        return SummaryVersion(
+            summary_id=UUID(record.summary_id),
+            application_id=UUID(record.application_id),
+            version=record.version,
+            content=dict(record.content),
+            created_at=created_at,
         )

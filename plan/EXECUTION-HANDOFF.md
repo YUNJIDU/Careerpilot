@@ -62,14 +62,15 @@ CareerPilot 是辅助求职 Agent，不替用户查看邮件、作求职决定�
 
 ## 当前状态与下一步
 
-- Stage 0–3 和 Stage 4A 已完成。
+- Stage 0–3 和 Stage 4A–4B 已完成。
 - FastAPI、React 骨架、Excel 引擎、SQLite/Application Core、持久化
   Job/Checkpoint、Fixture 邮件、163 只读 IMAP、规则提取和
   Mail → SQLite → Excel 闭环已通过测试。
 - Stage 4A 已提供本地 Web 工作台、Web 新增/编辑 Tracker、申请详情、
   邮件/Excel 同步、Jobs 和脱敏设置页。
-- 下一步执行 Stage 4B：岗位 Markdown、Brave Top 5 搜索和手动 Summary；
-  随后执行 Stage 4C Docker 首发验收。
+- Stage 4B 已提供岗位 Markdown、Brave Top 5 搜索、兼容 OpenAI 接口的
+  手动 Summary、不可变版本和可恢复 Job。
+- 下一步执行 Stage 4C Docker 首发验收。
 - 运行数据继续保留在 `data/`，不得提交真实邮件、数据库、Tracker 或凭证。
 
 ## 不可违反的边界
