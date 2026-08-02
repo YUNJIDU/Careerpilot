@@ -1,0 +1,143 @@
+.integration-section .inline-form {
+  margin: 18px 0 22px;
+}
+
+.integration-list,
+.reminder-list {
+  display: grid;
+  gap: 10px;
+}
+
+.integration-list article,
+.reminder-list article {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--app-line, #dce3ed);
+  border-radius: 12px;
+  background: #fbfcfe;
+}
+
+.integration-list article > div,
+.reminder-list article > div {
+  display: grid;
+  gap: 4px;
+  margin-right: auto;
+}
+
+.integration-list article span,
+.reminder-list article span,
+.reminder-list article time {
+  color: #657189;
+  font-size: 12px;
+}
+
+.integration-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+}
+
+.form-stack.compact {
+  max-width: none;
+  margin-bottom: 22px;
+}
+
+.notification-list {
+  display: grid;
+  gap: 8px;
+}
+
+.notification-list > button {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  width: 100%;
+  padding: 13px;
+  border: 1px solid #dce3ed;
+  border-radius: 11px;
+  color: #172033;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.notification-list > button.read {
+  opacity: .58;
+}
+
+.notification-list > button span:last-child {
+  display: grid;
+  gap: 4px;
+}
+
+.notification-list small {
+  color: #657189;
+}
+
+.signal {
+  width: 9px;
+  height: 9px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: #6f8cf6;
+}
+
+.signal.urgent { background: #f59e0b; }
+.signal.overdue { background: #dc4c4c; }
+
+.prefill-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.prefill-form > .button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.prefill-handoff {
+  display: grid;
+  gap: 12px;
+  margin-top: 22px;
+  padding: 18px;
+  border: 1px solid #b9c8f7;
+  border-radius: 12px;
+  background: #f4f7ff;
+}
+
+.prefill-handoff > div {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.prefill-handoff span {
+  color: #657189;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.prefill-handoff code {
+  overflow-wrap: anywhere;
+}
+
+.prefill-handoff p {
+  margin: 0;
+  color: #465166;
+  line-height: 1.65;
+}
+
+@media (max-width: 900px) {
+  .integration-grid,
+  .prefill-form {
+    grid-template-columns: 1fr;
+  }
+
+  .prefill-form > .button {
+    grid-column: auto;
+  }
+}

@@ -1,0 +1,43 @@
+name: Feature request
+description: 提议符合本地优先、证据化和人工控制边界的新能力。
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 用户问题
+      description: 描述要解决的问题，不要只描述界面或技术方案。
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: 可验收结果
+      description: 说明完成后用户能够做什么，以及如何验证。
+    validations:
+      required: true
+  - type: textarea
+    id: data
+    attributes:
+      label: 数据与权限
+      description: 会读取、写入或发送哪些数据？是否需要新 Secret、OAuth scope、浏览器权限或 Agent 工具？
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: 人工控制和明确不做
+      description: 说明审批点、回滚方式，以及不会自动化的动作。
+    validations:
+      required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: 建议阶段
+      options:
+        - P0–P3 维护
+        - P4 Stage 8 产品化
+        - 尚不确定
+    validations:
+      required: true

@@ -1,6 +1,6 @@
 # 流程图 4：后续 Orchestrator Multi-Agent 时序
 
-> 本图属于后续 Stage 6，不是首发完成条件。具体 Agent 划分进入该 Stage 时再设计。
+> 2026-08-01 的 Stage 6 评测结论是不引入 Multi-Agent。本图仅保留为长期条件候选；只有单 Agent 真实出现三个以上独立分支且确定性工具无法解决时才重新设计。
 
 ```mermaid
 sequenceDiagram

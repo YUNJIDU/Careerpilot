@@ -1,10 +1,10 @@
 # CareerPilot 新对话执行交接
 
-更新时间：2026-07-28
+更新时间：2026-08-02
 
 ## 任务目标
 
-从 Stage 0 开始实施 CareerPilot。
+维护已完成到 Stage 7 的 CareerPilot 本地发布候选，并在开始 Stage 8 前先完成生产化详细设计。
 
 CareerPilot 是辅助求职 Agent，不替用户查看邮件、作求职决定或完成自动投递。首发版本服务本人及能够本地部署的 AI 技术用户，后续再演进为云端 Web/SaaS。
 
@@ -36,41 +36,48 @@ CareerPilot 是辅助求职 Agent，不替用户查看邮件、作求职决定�
 - Windows 凭证使用 Credential Manager；Docker 使用环境变量或 secret 文件。
 - API 从 `/api/v1` 开始，项目采用语义化版本。
 
-## 执行顺序
+## 已执行顺序
 
 1. Stage 0：契约、安全与工程骨架。
 2. Stage 1：Excel Schema、解析、写出与差异计算。
 3. Stage 2：Application Core、SQLite、Alembic 和实际双向写入。
 4. Stage 3：MailAdapter、163、客观信息提取、附件和断点。
-5. Stage 4：本地 Web、岗位 Markdown、手动 Summary 和 Docker。
+5. Stage 4：本地 Web、岗位 Markdown、手动 Summary 和 Docker 发布闭环。
+6. P0.5：统一 MailAdapter、多邮箱、本地 `.eml`、附件批准和多简历。
+7. Stage 5：JD、公司研究、Resume–JD 证据映射、缺口和人工复盘。
+8. Stage 6：受控单 Agent、工具、预算、检查点和写入审批。
+9. Stage 7：Gmail/Outlook、提醒、ICS、通知和受控网页预填。
 
 不得跳过 Stage Gate。每个 Stage 的 Entry、任务、测试、Exit Gate 和 Demo 见详细计划。
 
 ## 新对话必须先阅读
 
 1. [批准的框架设计](../docs/superpowers/specs/2026-07-26-careerpilot-framework-design.md)
-2. [Stage 0–4 实施总计划](implementation/README.md)
-3. [Stage 0 详细计划](implementation/stage-00-implementation.md)
-4. [接口与安全标准](stages/stage-api-standards.md)
+2. [P0–P3 当前交付说明](../docs/DELIVERY_P0_P3.md)
+3. [接口与安全标准](stages/stage-api-standards.md)
+4. [Stage 5–7 当前设计](stages/)
 
-执行后续 Stage 时，再读取对应的实施文档：
+维护既有 Stage 时，再读取对应的实施文档：
 
 - [Stage 1](implementation/stage-01-implementation.md)
 - [Stage 2](implementation/stage-02-implementation.md)
 - [Stage 3](implementation/stage-03-implementation.md)
 - [Stage 4](implementation/stage-04-implementation.md)
+- [P0.5 使用与安全](../docs/P05_MVP.md)
+- [Stage 5 证据智能](../docs/STAGE5_EVIDENCE.md)
+- [Stage 6 Agent](../docs/STAGE6_AGENT.md)
+- [Stage 7 外部集成](../docs/STAGE7_INTEGRATIONS.md)
 
 ## 当前状态与下一步
 
-- Stage 0–3 和 Stage 4A–4B 已完成。
-- FastAPI、React 骨架、Excel 引擎、SQLite/Application Core、持久化
-  Job/Checkpoint、Fixture 邮件、163 只读 IMAP、规则提取和
-  Mail → SQLite → Excel 闭环已通过测试。
-- Stage 4A 已提供本地 Web 工作台、Web 新增/编辑 Tracker、申请详情、
-  邮件/Excel 同步、Jobs 和脱敏设置页。
-- Stage 4B 已提供岗位 Markdown、Brave Top 5 搜索、兼容 OpenAI 接口的
-  手动 Summary、不可变版本和可恢复 Job。
-- 下一步执行 Stage 4C Docker 首发验收。
+- Stage 0–7、P0.5、统一工作台 UI、Docker 和本地发布门禁已完成。
+- 当前数据库版本为 Alembic `0009`；迁移前备份、重启恢复和数据持久化已验证。
+- Stage 5 的 JD/公司研究/证据映射/缺口/复盘、Stage 6 的受控单 Agent、
+  Stage 7 的只读 OAuth/提醒/ICS/通知/安全预填均有后端和浏览器测试。
+- Stage 6 真实模型评测决定不引入 Multi-Agent。
+- Gmail/Outlook 代码与模拟供应商测试已通过；真实授权仍需要使用者自己的
+  Google Cloud / Microsoft Entra 应用和测试账户。
+- 下一步是 Stage 8 详细设计，不得在未设计租户、认证、备份、删除权和合规前公网部署。
 - 运行数据继续保留在 `data/`，不得提交真实邮件、数据库、Tracker 或凭证。
 
 ## 不可违反的边界
@@ -80,9 +87,10 @@ CareerPilot 是辅助求职 Agent，不替用户查看邮件、作求职决定�
 - 用户在 Excel/Web 中的修改优先，不得被静默覆盖。
 - 邮箱只读。
 - Summary 只由用户手动触发。
-- 首发不做岗位发现、职位推荐、提醒、模拟训练、自动填表和 Multi-Agent。
+- 不做岗位发现、职位推荐、候选人评分、录用概率或 Multi-Agent 空壳。
 - 首发不加载任意第三方插件。
 - 不登录第三方内容账号，不绕过反爬、验证码或付费墙。
+- 浏览器能力只预填白名单字段并展示差异，不自动提交；验证码始终人工处理。
 - 密钥不得进入 SQLite、Excel、Markdown、日志、前端、Git 或构建产物。
 - 真实邮件、简历、附件和运行数据不得提交到 Git。
 - 所有长任务必须有 Job、Checkpoint、幂等和安全恢复说明。
@@ -100,18 +108,18 @@ CareerPilot 是辅助求职 Agent，不替用户查看邮件、作求职决定�
 ## 可复制到新对话的提示词
 
 ```text
-请开始执行 CareerPilot Stage 0。
+请先审查 CareerPilot P0–P3 本地发布候选，然后提交 Stage 8 详细设计，不要直接实现。
 
-项目路径：E:\Master\CareerPilot
+项目路径：E:\鸡哥项目\Careerpilot
 
 先完整阅读：
 1. plan/EXECUTION-HANDOFF.md
-2. docs/superpowers/specs/2026-07-26-careerpilot-framework-design.md
-3. plan/implementation/README.md
-4. plan/implementation/stage-00-implementation.md
-5. plan/stages/stage-api-standards.md
+2. docs/DELIVERY_P0_P3.md
+3. docs/superpowers/specs/2026-07-26-careerpilot-framework-design.md
+4. plan/stages/stage-api-standards.md
+5. plan/stages/stage-08-deployment-and-commercialization.md
 
-严格按已批准范围实施，只执行 Stage 0，不提前实现 Stage 1–4。
-先检查仓库、环境、现有改动和适用的 AGENTS.md/技能说明，再开始修改。
-实施时持续运行对应测试；最后完成 Stage 0 Demo，逐条报告 Exit Gate 是否通过、修改了哪些文件、测试结果和剩余风险。
+先检查仓库、环境、现有改动和适用的 AGENTS.md/技能说明。详细设计必须覆盖
+PostgreSQL、Worker、对象存储、备份恢复、导出删除、身份/租户隔离、审计、
+凭证、迁移兼容和 SaaS 合规；设计批准前不修改 Stage 8 代码。
 ```

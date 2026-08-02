@@ -4,9 +4,8 @@ import hashlib
 import imaplib
 import re
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from contextlib import suppress
-from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from email import policy
 from email.message import Message
@@ -14,12 +13,18 @@ from email.parser import BytesParser
 from email.utils import parseaddr, parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Protocol
 from uuid import UUID
 
+from careerpilot.adapters.contracts import (
+    MAIL_ADAPTER_CONTRACT_VERSION,
+    MailAdapter,
+    MailAttachmentMetadata,
+    MailItem,
+)
 from careerpilot.core import (
     PROCESS_FIELDS,
     ApplicationService,
+    AttachmentService,
     Database,
     EmailService,
     ExcelSyncService,
@@ -29,23 +34,10 @@ from careerpilot.core import (
     normalize_identity,
     terminal_label,
 )
+from careerpilot.safe_files import MAX_ATTACHMENT_BYTES, classify_file
 
 MAX_MESSAGE_BYTES = 2 * 1024 * 1024
 MAX_TEXT_LENGTH = 100_000
-
-
-@dataclass
-class MailItem:
-    message_id: str | None
-    sender: str
-    subject: str
-    sent_at: datetime | None
-    text: str
-    raw_hash: str
-
-
-class MailAdapter(Protocol):
-    def fetch(self) -> Iterable[MailItem]: ...
 
 
 class MailSyncError(RuntimeError):
@@ -101,7 +93,27 @@ def _body(message: Message) -> str:
     return value[:MAX_TEXT_LENGTH]
 
 
-def parse_message(raw: bytes) -> MailItem:
+def _attachment_parts(message: Message) -> list[Message]:
+    return [
+        part
+        for part in message.walk()
+        if part.get_content_maintype() != "multipart"
+        and (part.get_content_disposition() == "attachment" or part.get_filename())
+    ]
+
+
+def _attachment_content(raw: bytes, index: int) -> bytes:
+    message = BytesParser(policy=policy.default).parsebytes(raw)
+    parts = _attachment_parts(message)
+    if index < 0 or index >= len(parts):
+        raise ValueError("attachment source is invalid")
+    payload = parts[index].get_payload(decode=True)
+    if payload is None:
+        raise ValueError("attachment content is unavailable")
+    return bytes(payload)
+
+
+def parse_message(raw: bytes, *, source_id: str | None = None) -> MailItem:
     if len(raw) > MAX_MESSAGE_BYTES:
         raise ValueError("message exceeds 2 MiB")
     message = BytesParser(policy=policy.default).parsebytes(raw)
@@ -111,31 +123,69 @@ def parse_message(raw: bytes) -> MailItem:
             sent_at = parsedate_to_datetime(str(message["Date"]))
         except (TypeError, ValueError):
             pass
+    raw_hash = hashlib.sha256(raw).hexdigest()
+    source_id = source_id or f"raw:{raw_hash}"
+    attachments = tuple(
+        MailAttachmentMetadata(
+            source_id=f"{source_id}:{index}",
+            filename=str(part.get_filename() or f"attachment-{index + 1}")[:255],
+            content_type=part.get_content_type()[:200],
+            size=len(payload)
+            if isinstance(payload := part.get_payload(decode=True), bytes)
+            else None,
+        )
+        for index, part in enumerate(_attachment_parts(message))
+    )
     return MailItem(
         message_id=str(message["Message-ID"]) if message.get("Message-ID") else None,
         sender=str(message.get("From", ""))[:500],
         subject=str(message.get("Subject", ""))[:500],
         sent_at=sent_at,
         text=_body(message),
-        raw_hash=hashlib.sha256(raw).hexdigest(),
+        raw_hash=raw_hash,
+        source_id=source_id,
+        attachments=attachments,
     )
 
 
 class FixtureMailAdapter:
-    def __init__(self, directory: Path) -> None:
+    contract_version = MAIL_ADAPTER_CONTRACT_VERSION
+
+    def __init__(self, directory: Path, *, sample_id: str | None = None) -> None:
         self.directory = directory
+        self.sample_id = sample_id
+
+    def test_connection(self) -> None:
+        if not self.directory.is_dir():
+            raise FileNotFoundError(self.directory)
 
     def fetch(self) -> list[MailItem]:
         items: list[MailItem] = []
-        for path in sorted(self.directory.glob("*.eml")):
+        paths = (
+            [self.directory / f"{self.sample_id}.eml"]
+            if self.sample_id
+            else sorted(self.directory.glob("*.eml"))
+        )
+        for path in paths:
             try:
                 items.append(parse_message(path.read_bytes()))
             except (OSError, ValueError):
                 continue
         return items
 
+    def fetch_attachment(self, source_id: str) -> bytes:
+        match = re.fullmatch(r"raw:([0-9a-f]{64}):(\d+)", source_id)
+        if not match:
+            raise ValueError("attachment source is invalid")
+        path = self.directory / f"{match.group(1)}.eml"
+        if path.parent.resolve() != self.directory.resolve() or not path.is_file():
+            raise FileNotFoundError("email sample is unavailable")
+        return _attachment_content(path.read_bytes(), int(match.group(2)))
+
 
 class Imap163Adapter:
+    contract_version = MAIL_ADAPTER_CONTRACT_VERSION
+
     def __init__(
         self,
         email: str,
@@ -169,6 +219,40 @@ class Imap163Adapter:
     def fetch(self) -> list[MailItem]:
         return self._retry(self._fetch_once)
 
+    def fetch_attachment(self, source_id: str) -> bytes:
+        match = re.fullmatch(r"imap:(\d+):([0-9a-f]{64}):(\d+)", source_id)
+        if not match:
+            raise ValueError("attachment source is invalid")
+        client = self._connect()
+        try:
+            status, _ = client.select("INBOX", readonly=True)
+            if status != "OK":
+                raise ConnectionError("163 inbox is unavailable")
+            raw = self._fetch_raw(client, match.group(1).encode())
+            if hashlib.sha256(raw).hexdigest() != match.group(2):
+                raise ValueError("email changed before attachment approval")
+            return _attachment_content(raw, int(match.group(3)))
+        finally:
+            with suppress(Exception):
+                client.logout()
+
+    @staticmethod
+    def _fetch_raw(client: object, message_id: bytes) -> bytes:
+        status, payload = client.fetch(message_id, "(BODY.PEEK[])")
+        if status != "OK":
+            raise ConnectionError("163 message fetch failed")
+        raw = next(
+            (
+                part[1]
+                for part in payload
+                if isinstance(part, tuple) and len(part) > 1 and isinstance(part[1], bytes)
+            ),
+            None,
+        )
+        if not raw:
+            raise ConnectionError("163 message content is unavailable")
+        return raw
+
     def _fetch_once(self) -> list[MailItem]:
         client = self._connect()
         try:
@@ -181,24 +265,13 @@ class Imap163Adapter:
             message_ids = data[0].split()[-self.limit :] if data and data[0] else []
             items: list[MailItem] = []
             for message_id in message_ids:
-                status, payload = client.fetch(message_id, "(BODY.PEEK[])")
-                if status != "OK":
+                try:
+                    raw = self._fetch_raw(client, message_id)
+                    raw_hash = hashlib.sha256(raw).hexdigest()
+                    sequence = message_id.decode("ascii")
+                    items.append(parse_message(raw, source_id=f"imap:{sequence}:{raw_hash}"))
+                except (ConnectionError, UnicodeDecodeError, ValueError):
                     continue
-                raw = next(
-                    (
-                        part[1]
-                        for part in payload
-                        if isinstance(part, tuple)
-                        and len(part) > 1
-                        and isinstance(part[1], bytes)
-                    ),
-                    None,
-                )
-                if raw:
-                    try:
-                        items.append(parse_message(raw))
-                    except ValueError:
-                        continue
             return items
         finally:
             with suppress(Exception):
@@ -220,7 +293,12 @@ class Imap163Adapter:
         if not re.fullmatch(r"[^@\s\"]+@[^@\s\"]+\.[^@\s\"]+", self.email):
             raise ValueError("invalid email address")
         client = self.client_factory("imap.163.com", 993, timeout=15)
-        status, _ = client.login(self.email, self.authorization_code)
+        try:
+            status, _ = client.login(self.email, self.authorization_code)
+        except imaplib.IMAP4.error as exc:
+            with suppress(Exception):
+                client.logout()
+            raise PermissionError("163 authentication failed") from exc
         if status != "OK":
             client.logout()
             raise PermissionError("163 authentication failed")
@@ -351,6 +429,7 @@ class MailSyncService:
         self.database = database
         self.applications = ApplicationService(database)
         self.emails = EmailService(database)
+        self.attachments = AttachmentService(database)
         self.excel = ExcelSyncService(database, self.applications)
         self.jobs = JobService(database)
 
@@ -366,9 +445,7 @@ class MailSyncService:
         if resume_payload:
             self.jobs.progress(job.job_id, "configured", resume_payload)
         try:
-            return self._sync(
-                adapter, account_id, tracker_path, job, idempotency_key
-            )
+            return self._sync(adapter, account_id, tracker_path, job, idempotency_key)
         except Exception as exc:
             self.jobs.fail(
                 job.job_id,
@@ -386,9 +463,7 @@ class MailSyncService:
         idempotency_key: str,
     ) -> int:
         if tracker_path.exists():
-            self.excel.import_workbook(
-                tracker_path, f"{idempotency_key}:tracker-import"
-            )
+            self.excel.import_workbook(tracker_path, f"{idempotency_key}:tracker-import")
         self._reconcile_linked_mail()
         processed = 0
         for item in adapter.fetch():
@@ -398,6 +473,7 @@ class MailSyncService:
                 account_id, item.raw_hash, item.message_id
             )
             if linked_application_id:
+                self._record_attachments(item, account_id)
                 continue
             facts = extract_facts(f"{item.subject}\n{item.text}", item.sender)
             company, role = facts.get("公司名称"), facts.get("岗位")
@@ -409,10 +485,8 @@ class MailSyncService:
                     (
                         candidate
                         for candidate in self.applications.list()
-                        if normalize_identity(candidate.company)
-                        == normalize_identity(str(company))
-                        and normalize_identity(candidate.role)
-                        == normalize_identity(str(role))
+                        if normalize_identity(candidate.company) == normalize_identity(str(company))
+                        and normalize_identity(candidate.role) == normalize_identity(str(role))
                     ),
                     None,
                 )
@@ -439,6 +513,7 @@ class MailSyncService:
                 if application_id:
                     self.emails.link(item.raw_hash, application_id, facts)
                 else:
+                    self._record_attachments(item, account_id)
                     continue
             else:
                 self.emails.record(
@@ -451,6 +526,7 @@ class MailSyncService:
                     application_id=application_id,
                     facts=facts,
                 )
+            self._record_attachments(item, account_id)
             processed += 1
             self.jobs.progress(
                 job.job_id,
@@ -462,6 +538,25 @@ class MailSyncService:
         self.jobs.complete(job.job_id, {"processed": processed})
         return processed
 
+    def _record_attachments(self, item: MailItem, account_id: str) -> None:
+        metadata: list[dict[str, object]] = []
+        for attachment in item.attachments:
+            allowed, reason = classify_file(attachment.filename, attachment.content_type)
+            if attachment.size is not None and attachment.size > MAX_ATTACHMENT_BYTES:
+                allowed, reason = False, "file exceeds size limit"
+            metadata.append(
+                {
+                    "source_id": attachment.source_id,
+                    "filename": attachment.filename,
+                    "content_type": attachment.content_type,
+                    "size": attachment.size,
+                    "allowed": allowed,
+                    "rejection_reason": reason,
+                }
+            )
+        if metadata:
+            self.attachments.record_metadata(item.raw_hash, account_id, metadata)
+
     def _reconcile_linked_mail(self) -> None:
         by_application: dict[UUID, list[StoredEmail]] = {}
         for email in self.emails.linked():
@@ -469,11 +564,7 @@ class MailSyncService:
         for application_id, emails in by_application.items():
             emails.sort(key=lambda email: self._naive_utc(email.sent_at))
             receipt = next(
-                (
-                    email
-                    for email in emails
-                    if email.facts.get("当前阶段") == "已投递"
-                ),
+                (email for email in emails if email.facts.get("当前阶段") == "已投递"),
                 None,
             )
             if receipt:
@@ -497,13 +588,8 @@ class MailSyncService:
                 evidence=f"Date: {latest.sent_at.isoformat()}",
             )
             stage = latest.facts.get("当前阶段")
-            user_changed = self.applications.latest_user_change(
-                application_id, "当前阶段"
-            )
-            if stage and (
-                not user_changed
-                or sent_at > self._naive_utc(user_changed)
-            ):
+            user_changed = self.applications.latest_user_change(application_id, "当前阶段")
+            if stage and (not user_changed or sent_at > self._naive_utc(user_changed)):
                 self.applications.apply_field_change(
                     application_id,
                     "当前阶段",
