@@ -10,7 +10,7 @@ flowchart TD
     M["首发技术用户版本"]
     S5["Stage 5<br/>求职智能扩展模块"]
     S6["Stage 6<br/>Orchestrator Multi-Agent"]
-    S7["Stage 7<br/>提醒、更多邮箱、验证码与自动填表"]
+    S7["Stage 7<br/>只读邮箱、提醒、ICS 与受控预填"]
     S8["Stage 8<br/>普通用户产品化与商业化"]
 
     S0 --> S1

@@ -144,14 +144,14 @@ def test_settings_are_atomic_scoped_and_never_echo_secrets(tmp_path: Path) -> No
         "scheduling_enabled": False,
         "mail_secret": f"mail-{sentinel}",
         "model_secret": f"model-{sentinel}",
-        "brave_secret": f"brave-{sentinel}",
+        "tavily_secret": f"tavily-{sentinel}",
     }
     response = client.put("/api/v1/settings", json=payload)
     assert response.status_code == 200
     body = response.json()
     assert body["mail_secret_saved"]
     assert body["model_secret_saved"]
-    assert body["brave_secret_saved"]
+    assert body["tavily_secret_saved"]
     assert sentinel not in str(body)
     assert sentinel not in (tmp_path / "settings.json").read_text(encoding="utf-8")
 

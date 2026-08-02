@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "CareerPilot 安全预填",
+  "version": "0.1.0",
+  "description": "预览差异后填入当前招聘表单；永不处理验证码或提交表单。",
+  "permissions": ["activeTab", "scripting"],
+  "host_permissions": ["http://127.0.0.1:9998/*"],
+  "action": {
+    "default_title": "CareerPilot 安全预填",
+    "default_popup": "popup.html"
+  }
+}

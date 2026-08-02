@@ -1,10 +1,6 @@
 from typing import Any, Protocol
 
 
-class MailAdapter(Protocol):
-    def fetch(self, checkpoint: str | None = None) -> list[dict[str, Any]]: ...
-
-
 class ModelGateway(Protocol):
     def generate(self, payload: dict[str, Any]) -> dict[str, Any]: ...
 
@@ -27,4 +23,3 @@ class DeferredService:
 
 
 BackupService = RestoreService = DeleteService = DeferredService
-

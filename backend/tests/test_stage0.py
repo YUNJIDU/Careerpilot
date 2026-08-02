@@ -11,8 +11,8 @@ from careerpilot.extensions import DeferredService
 from careerpilot.security import escape_excel_formula, mark_untrusted, redact, safe_path
 
 
-def test_health_and_local_cors() -> None:
-    client = TestClient(create_app())
+def test_health_and_local_cors(tmp_path: Path) -> None:
+    client = TestClient(create_app(data_dir=tmp_path))
     assert client.get("/api/v1/health").json()["status"] == "ok"
     response = client.options(
         "/api/v1/health",

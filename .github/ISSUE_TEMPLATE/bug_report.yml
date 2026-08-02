@@ -1,0 +1,53 @@
+name: Bug report
+description: 报告可复现的软件缺陷；安全问题请使用私密安全公告。
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: 请先删除邮箱、公司、简历、附件、令牌和本地路径中的个人信息。
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题描述
+      description: 说明预期结果和实际结果。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 最小复现步骤
+      placeholder: |
+        1. 启动方式...
+        2. 打开页面...
+        3. 执行操作...
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: 运行环境
+      options:
+        - Windows 本地
+        - Docker Desktop
+        - GitHub Actions
+        - 其他
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: 版本或提交
+      placeholder: git rev-parse --short HEAD
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 已脱敏日志或截图
+      description: 不要上传 data/、数据库、Tracker、邮件、简历或凭证。
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: 数据确认
+      options:
+        - label: 我已确认内容不含真实个人数据或 Secret。
+          required: true

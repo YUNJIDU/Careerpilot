@@ -5,6 +5,7 @@ from email.message import EmailMessage
 from pathlib import Path
 
 import keyring
+import pytest
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
@@ -406,6 +407,31 @@ def test_163_adapter_retries_transient_failure_but_not_authentication() -> None:
     assert RetryImap.attempts == 1
 
 
+def test_163_login_error_becomes_safe_permission_error() -> None:
+    sentinel = "SERVER_DETAIL_SENTINEL_7391"
+
+    class RejectingImap:
+        def __init__(self, host: str, port: int, timeout: int) -> None:
+            pass
+
+        def login(self, email: str, code: str):
+            raise imaplib.IMAP4.error(f"LOGIN failed {sentinel}".encode())
+
+        def logout(self) -> None:
+            pass
+
+    adapter = Imap163Adapter(
+        "me@163.com",
+        "not-logged",
+        since=date(2026, 1, 1),
+        client_factory=RejectingImap,
+    )
+
+    with pytest.raises(PermissionError, match="163 authentication failed") as error:
+        adapter.test_connection()
+    assert sentinel not in str(error.value)
+
+
 def test_mail_connection_and_sync_api(tmp_path: Path) -> None:
     class SecretStore:
         def get(self, account_id: str, email: str) -> str:
@@ -525,6 +551,11 @@ def test_failed_mail_job_resumes_without_secrets_or_duplicates(tmp_path: Path) -
     resumed = client.post(f"/api/v1/jobs/{job_id}/resume")
     assert resumed.status_code == 200
     assert resumed.json()["processed"] == 1
+    recovered = client.get(f"/api/v1/jobs/{job_id}").json()
+    assert recovered["status"] == "succeeded"
+    assert recovered["current_step"] == "resumed"
+    assert not recovered["retryable"]
+    assert recovered["error_code"] is None
     applications = client.get("/api/v1/applications").json()
     assert {item["company"] for item in applications} == {"First Co", "Second Co"}
 

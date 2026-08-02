@@ -1,4 +1,6 @@
 .env
+.env.*
+/secrets/
 .venv/
 __pycache__/
 .pytest_cache/
@@ -8,9 +10,16 @@ node_modules/
 dist/
 .superpowers/
 .playwright-cli/
+frontend/playwright-report/
+frontend/test-results/
+frontend/data/
 *.egg-info/
 *.tsbuildinfo
 data/*
 !data/.gitkeep
 *.xlsx
 !tests/fixtures/*.xlsx
+
+# Local visual QA artifacts contain machine-specific paths and are not release assets.
+/design-qa*.png
+/design-qa.md
