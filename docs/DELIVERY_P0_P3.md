@@ -390,4 +390,151 @@ P4 Stage 8 只有在单独设计、迁移和安全评审后才能引入 PostgreS
 - [x] GitHub PR/Issue 模板与 CI 工作流齐备。
 - [x] `data/`、Secret、构建输出、Playwright 报告和本机 UI QA 文件被排除。
 - [x] 后端、前端、E2E、依赖、安全和 Docker 门禁有可复现命令与结果。
-- [ ] 推送、创建 PR、远端 Actions 和发布标签：本次本地交付不执行。
+- [x] 已推送到贡献者 Fork，并向上游创建 Draft PR。
+- [ ] 上游 Actions 尚待仓库维护者批准运行；发布标签仅在 PR 通过评审并合并后创建。
+
+## 13. 全部文件级改动清单
+
+本节记录相对上游 `YUNJIDU/Careerpilot` `main` 基线提交 `010ca92` 的完整交付差异，共 96 个文件。`A` 表示新增文件，`M` 表示修改已有文件；运行数据、密钥、构建产物和本机测试报告均未纳入版本控制。
+
+### 13.1 仓库治理、发布与安全基线（16 项）
+
+- `[A] .dockerignore`：缩小 Docker 构建上下文，排除本机数据、开发缓存和非运行时产物。
+- `[M] .env.example`：补充前后端地址、外部搜索、模型、OAuth 和 Secret 文件等示例配置，不包含真实凭证。
+- `[A] .gitattributes`：统一文本换行与二进制文件属性，降低 Windows/Linux 协作差异。
+- `[A] .github/ISSUE_TEMPLATE/bug_report.yml`：新增结构化缺陷报告模板。
+- `[A] .github/ISSUE_TEMPLATE/config.yml`：配置 Issue 模板入口与空白 Issue 策略。
+- `[A] .github/ISSUE_TEMPLATE/feature_request.yml`：新增功能建议模板。
+- `[A] .github/pull_request_template.md`：新增包含迁移、测试、安全、隐私和回滚项的 PR 模板。
+- `[M] .github/workflows/ci.yml`：扩展 Windows/Linux 测试、Ruff、前端构建、浏览器 E2E、依赖/Secret 扫描和 Docker 冒烟门禁。
+- `[M] .gitignore`：排除数据库、密钥、上传内容、虚拟环境、构建输出和测试报告等本机产物。
+- `[A] CHANGELOG.md`：记录 P0–P3 交付内容、兼容性变化与已知限制。
+- `[A] CONTRIBUTING.md`：说明分支、提交、测试、迁移和 PR 协作流程。
+- `[A] Dockerfile`：新增带锁定依赖、非 root 运行、迁移和健康检查的发布镜像构建流程。
+- `[A] PRIVACY.md`：说明本地优先的数据处理、第三方数据流、留存与用户责任。
+- `[M] README.md`：更新产品能力、架构、安装、Docker、阶段指南、安全边界和文档导航。
+- `[A] SECURITY.md`：新增漏洞报告、Secret 管理、文件/网络/Agent/OAuth 安全边界。
+- `[M] THIRD_PARTY_LICENSES.md`：同步新增运行与开发依赖的第三方许可说明。
+
+### 13.2 数据库迁移（7 项）
+
+- `[A] backend/migrations/versions/0003_mail_accounts.py`：把单邮箱配置迁移为可恢复的多邮件账户模型。
+- `[A] backend/migrations/versions/0004_p05_resources.py`：新增本地邮件样本、附件授权、简历版本与岗位关联资源。
+- `[A] backend/migrations/versions/0005_jd_versions.py`：新增可追溯的 JD 版本存储。
+- `[A] backend/migrations/versions/0006_company_research.py`：新增带公开来源的公司研究版本。
+- `[A] backend/migrations/versions/0007_evidence_reviews.py`：新增简历—JD 证据映射和人工复盘记录。
+- `[A] backend/migrations/versions/0008_agent_runs.py`：新增 Agent Run、工具调用、预算、检查点和审批记录。
+- `[A] backend/migrations/versions/0009_stage7_external_integrations.py`：新增 OAuth 连接、提醒、通知和表单预填会话资源。
+
+### 13.3 依赖与锁定环境（7 项）
+
+- `[M] backend/pyproject.toml`：登记新增后端依赖、开发工具和 Ruff/Pytest 配置。
+- `[A] backend/requirements/linux-dev.lock`：锁定 Linux 开发与测试依赖。
+- `[A] backend/requirements/linux-runtime.lock`：锁定 Linux/Docker 运行依赖。
+- `[A] backend/requirements/linux-security.lock`：锁定 Linux 安全审计工具链。
+- `[A] backend/requirements/security.in`：维护安全扫描顶层依赖输入。
+- `[A] backend/requirements/windows-dev.lock`：锁定 Windows 开发与测试依赖。
+- `[A] backend/requirements/windows-runtime.lock`：锁定 Windows 本地运行依赖。
+
+### 13.4 后端实现（13 个文件）
+
+- `[A] backend/src/careerpilot/adapters/__init__.py`：集中导出内置 Adapter v1 协议与实现入口。
+- `[A] backend/src/careerpilot/adapters/contracts.py`：定义唯一的邮件、搜索、网页获取与模型客户端协议。
+- `[A] backend/src/careerpilot/agent.py`：实现最小单 Agent、内置工具注册、预算、超时、检查点和人工审批。
+- `[M] backend/src/careerpilot/api.py`：接入 P0.5–P3 API、统一错误处理、配置校验和生命周期管理。
+- `[M] backend/src/careerpilot/core.py`：扩展 ORM、业务服务、迁移兼容和应用写入边界。
+- `[M] backend/src/careerpilot/extensions.py`：统一依赖注入接口并移除重复协议，限制为内置适配器。
+- `[A] backend/src/careerpilot/external_mail.py`：实现 Gmail API、Microsoft Graph 和 OAuth PKCE 只读连接逻辑。
+- `[M] backend/src/careerpilot/mail.py`：支持多邮箱、本地 `.eml` 复用解析、同步去重和安全认证错误。
+- `[A] backend/src/careerpilot/safe_files.py`：集中处理文件白名单、大小、路径、文件名、签名、宏和压缩包限制。
+- `[M] backend/src/careerpilot/secrets.py`：扩展系统密钥库访问、按资源命名和泄密防护。
+- `[A] backend/src/careerpilot/stage5.py`：实现 JD 结构化、公司研究、证据映射、缺口状态和人工复盘。
+- `[A] backend/src/careerpilot/stage7.py`：实现 OAuth 集成、ICS/提醒、通知与受控表单预填服务。
+- `[M] backend/src/careerpilot/summary.py`：增强 Tavily/模型 Summary 的来源约束、结构化输出和失败处理。
+- 跨文件架构约束：所有新增写操作继续经过业务服务，Adapter 和 Agent 不直接操作 ORM。
+
+> 注：最后一项用于明确跨文件架构约束，不重复计入 96 个文件总数。
+
+### 13.5 后端自动化测试（12 个文件）
+
+- `[M] backend/tests/test_stage0.py`：更新基础启动、迁移和兼容性断言。
+- `[A] backend/tests/test_stage05_adapter_v1.py`：验证统一 Adapter v1 与内置加载边界。
+- `[A] backend/tests/test_stage05_attachments_resumes.py`：覆盖附件授权、安全文件和多简历资源。
+- `[A] backend/tests/test_stage05_eml_import.py`：覆盖 Web/API `.eml` 导入、解析复用、去重与恶意文件路径。
+- `[A] backend/tests/test_stage05_multi_mail.py`：覆盖多邮箱迁移、隔离同步和认证错误脱敏。
+- `[M] backend/tests/test_stage3.py`：适配扩展后的模型、搜索与 Summary 行为。
+- `[M] backend/tests/test_stage4a.py`：更新邮件同步与设置兼容性测试。
+- `[M] backend/tests/test_stage4b.py`：更新任务、恢复和 API 流程测试。
+- `[A] backend/tests/test_stage4c.py`：覆盖发布配置、健康检查、路径修复和故障恢复。
+- `[A] backend/tests/test_stage5.py`：覆盖 JD、公司研究、证据映射、引用和人工复盘。
+- `[A] backend/tests/test_stage6.py`：覆盖工具调用、审批、预算、超时、检查点和评测边界。
+- `[A] backend/tests/test_stage7.py`：覆盖 OAuth、只读权限、提醒、通知、预填差异与验证码接管。
+- 安全用例覆盖路径穿越、恶意文件名、超限文件、Prompt Injection 和 Secret 泄漏；该说明不对应额外文件。
+
+### 13.6 浏览器扩展（4 项）
+
+- `[A] browser-extension/manifest.json`：定义最小权限 Manifest V3 扩展，仅请求 `activeTab` 与必要脚本能力。
+- `[A] browser-extension/popup.html`：提供连接本地 CareerPilot、获取预填会话和人工确认的界面。
+- `[A] browser-extension/popup.css`：实现扩展弹窗的布局、状态与差异提示样式。
+- `[A] browser-extension/popup.js`：实现白名单字段预填、差异展示、验证码停止和禁止自动提交。
+
+### 13.7 工程与阶段文档（9 项）
+
+- `[A] docs/DELIVERY_P0_P3.md`：本交付总览，集中记录架构、使用、安全、验证、流程和完整差异。
+- `[A] docs/P05_MVP.md`：说明 Adapter v1、多邮箱、`.eml`、附件和多简历验收流程。
+- `[A] docs/README.md`：提供文档地图与推荐阅读顺序。
+- `[A] docs/STAGE4C_RELEASE.md`：说明 Docker、Windows CI、E2E、安全扫描、迁移和回滚闭环。
+- `[A] docs/STAGE5_EVIDENCE.md`：说明证据智能的数据模型、状态语义、引用和人工复盘。
+- `[A] docs/STAGE6_AGENT.md`：说明单 Agent 工具、审批、预算、检查点和 ORM 隔离。
+- `[A] docs/STAGE6_EVALUATION.md`：记录单 Agent 评测方法与是否引入 Multi-Agent 的判断标准。
+- `[A] docs/STAGE7_EVALUATION.md`：记录外部集成安全、失败路径和用户可见验收。
+- `[A] docs/STAGE7_INTEGRATIONS.md`：说明 Gmail、Outlook、ICS、通知和浏览器预填的配置与限制。
+
+### 13.8 前端测试与构建配置（7 项）
+
+- `[A] frontend/e2e/first-release.spec.ts`：覆盖首发关键用户路径和发布冒烟。
+- `[A] frontend/e2e/stage5-evidence.spec.ts`：覆盖 JD、研究、证据映射和人工复盘界面。
+- `[A] frontend/e2e/stage6-agent.spec.ts`：覆盖 Agent Run、审批、暂停与恢复界面。
+- `[A] frontend/e2e/stage7.spec.ts`：覆盖集成、提醒、通知和预填会话界面。
+- `[M] frontend/package-lock.json`：锁定新增前端与 Playwright 依赖。
+- `[M] frontend/package.json`：新增检查、生产构建和 E2E 脚本。
+- `[A] frontend/playwright.config.ts`：配置 Chromium E2E、服务启动、端口和隔离数据环境。
+
+### 13.9 前端页面、交互与视觉（13 个文件）
+
+- `[A] frontend/src/AgentPage.tsx`：新增 Stage 6 Agent 运行、预算、工具记录与审批工作台。
+- `[M] frontend/src/App.tsx`：整合欢迎页、统一工作台导航、Stage 5–7 路由与全局状态。
+- `[A] frontend/src/EvidencePage.tsx`：新增 JD 版本、公司研究、证据映射和人工复盘页面。
+- `[A] frontend/src/IntegrationsPage.tsx`：新增 OAuth 连接、提醒、通知和表单预填管理页面。
+- `[A] frontend/src/WelcomePage.tsx`：新增产品介绍、动态 IT 视觉和进入主工作台的首页。
+- `[M] frontend/src/api.ts`：补齐 P0.5–P3 类型、请求方法、错误模型和外部集成 API。
+- `[A] frontend/src/app-theme.css`：统一工作台色彩、字号、布局、组件状态和响应式规则。
+- `[A] frontend/src/assets/careerpilot-data-layers.png`：新增首页数据层视觉资产。
+- `[A] frontend/src/stage5.css`：新增证据智能页面专用样式。
+- `[A] frontend/src/stage6.css`：新增 Agent 控制台、审批和运行状态样式。
+- `[A] frontend/src/stage7.css`：新增外部集成、提醒、通知和预填样式。
+- `[A] frontend/src/vite-env.d.ts`：补充 Vite 客户端环境变量类型声明。
+- `[A] frontend/src/welcome.css`：实现欢迎页动态背景、首屏、演示工作台和响应式布局。
+- 统一 UI 同时覆盖现有总览、申请、邮件、简历、任务和设置页面；该说明由 `App.tsx` 与 `app-theme.css` 共同实现，不对应额外文件。
+- 首页与工作台保持本地优先、安全审批和可追溯语义，不展示招聘成功率或候选人总分。
+
+> 注：末两项是跨文件视觉与产品约束，不重复计入 96 个文件总数。
+
+### 13.10 执行计划与架构约定（8 项）
+
+- `[M] plan/EXECUTION-HANDOFF.md`：更新 P0–P3 实际完成状态、验收证据和后续接手说明。
+- `[M] plan/README.md`：同步阶段入口、执行顺序与文档索引。
+- `[M] plan/map/flow-00-wbs-development-order.md`：更新 WBS、阶段门禁和顺序依赖。
+- `[M] plan/map/flow-04-multi-agent-sequence.md`：明确先验证单 Agent，仅在评测证明必要时再采用 Multi-Agent。
+- `[M] plan/stages/stage-05-career-intelligence-modules.md`：固化证据智能、四态映射、来源约束和人工复盘设计。
+- `[M] plan/stages/stage-06-agent-orchestration.md`：固化工具注册、审批、预算、检查点和确定性服务边界。
+- `[M] plan/stages/stage-07-external-integrations.md`：固化 OAuth 最小权限、只读邮件、人工提交和验证码接管边界。
+- `[M] plan/stages/stage-api-standards.md`：扩展版本化 API、错误码、幂等、审计、分页和安全响应约定。
+
+### 13.11 不在本次 Git 交付中的内容
+
+- 本机 `data/`、SQLite 数据库、上传附件、简历原件和 `.eml` 样本。
+- Tavily、模型、邮箱授权码、Gmail/Microsoft OAuth 令牌及其他 Secret。
+- `.venv`、`node_modules`、构建产物、Playwright 报告、截图和临时 QA 资料。
+- Docker 本机卷、缓存镜像层和真实邮箱测试数据。
+- P4 Stage 8 的 PostgreSQL、Worker、对象存储、租户认证、备份服务和 SaaS 合规能力；这些仍是后续规划，不是当前实现。
