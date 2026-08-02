@@ -222,6 +222,7 @@ def create_app(
     external_mail_adapter_factory: Callable[[MailAccount, date, int], MailAdapter]
     | None = None,
     oauth_token_request: Callable[[str, dict[str, str]], dict[str, object]] | None = None,
+    oauth_identity_request: Callable[[str, str], str] | None = None,
 ) -> FastAPI:
     mail_adapter_factory = mail_adapter_factory or BUILTIN_MAIL_ADAPTERS["imap163"]
     frontend_origin = frontend_origin or os.getenv(
@@ -279,6 +280,7 @@ def create_app(
         oauth_connections,
         secret_store,
         **({"token_request": oauth_token_request} if oauth_token_request else {}),
+        **({"identity_request": oauth_identity_request} if oauth_identity_request else {}),
     )
     reminders = ReminderService(database)
     prefill = PrefillService(database)

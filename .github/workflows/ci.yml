@@ -154,7 +154,7 @@ jobs:
           print("Trivy gate passed")
           PY
       - name: Start release image
-        run: docker run --detach --name careerpilot-ci --publish 9998:9998 --publish 9999:9998 careerpilot:ci
+        run: docker run --detach --name careerpilot-ci --publish 127.0.0.1:9998:9998 --publish 127.0.0.1:9999:9998 careerpilot:ci
       - name: Wait for health
         shell: bash
         run: |

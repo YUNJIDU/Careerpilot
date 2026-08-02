@@ -3,6 +3,7 @@ import json
 import sqlite3
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from typing import Self
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -14,7 +15,7 @@ from careerpilot.adapters.contracts import MAIL_ADAPTER_CONTRACT_VERSION
 from careerpilot.api import create_app
 from careerpilot.core import Database, MailAccountService, upgrade_database
 from careerpilot.external_mail import GmailApiAdapter, OutlookGraphAdapter
-from careerpilot.stage7 import OAuthConnectionService, OAuthCoordinator
+from careerpilot.stage7 import OAuthConnectionService, OAuthCoordinator, request_identity
 
 
 class MemorySecrets:
@@ -117,6 +118,43 @@ def test_gmail_and_outlook_reuse_mail_adapter_v1() -> None:
     assert outlook.fetch_attachment(outlook_item.attachments[0].source_id) == b"hello"
 
 
+@pytest.mark.parametrize(
+    ("provider", "payload", "expected"),
+    [
+        ("gmail", {"emailAddress": "User@Gmail.com"}, "User@Gmail.com"),
+        (
+            "outlook",
+            {"mail": None, "userPrincipalName": "user@outlook.com"},
+            "user@outlook.com",
+        ),
+    ],
+)
+def test_oauth_identity_comes_from_the_provider(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    payload: dict[str, object],
+    expected: str,
+) -> None:
+    class Response:
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self, maximum: int) -> bytes:
+            assert maximum == 1_000_000
+            return json.dumps(payload).encode()
+
+    def fake_urlopen(request: object, timeout: int) -> Response:
+        assert timeout == 20
+        assert request.headers["Authorization"] == "Bearer provider-token"
+        return Response()
+
+    monkeypatch.setattr("careerpilot.stage7.urlopen", fake_urlopen)
+    assert request_identity(provider, "provider-token") == expected
+
+
 def test_oauth_tokens_stay_in_secret_store_and_provider_mail_can_sync(tmp_path: Path) -> None:
     unconfigured = TestClient(
         create_app(data_dir=tmp_path / "unconfigured", secret_store=MemorySecrets())
@@ -146,6 +184,7 @@ def test_oauth_tokens_stay_in_secret_store_and_provider_mail_can_sync(tmp_path: 
             data_dir=tmp_path,
             secret_store=secrets,
             oauth_token_request=token_request,
+            oauth_identity_request=lambda provider, token: "user@gmail.com",
             external_mail_adapter_factory=lambda account, since, limit: EmptyAdapter(),
         )
     )
@@ -229,6 +268,37 @@ def test_read_only_oauth_secret_refresh_is_cached_in_memory(tmp_path: Path) -> N
     assert calls == 1
     persisted = json.loads(secret_store.named["oauth.outlook.outlook-work.token"])
     assert persisted["access_token"] == "expired"
+    coordinator.disconnect("outlook", "outlook-work")
+    with pytest.raises(PermissionError, match="invalid"):
+        coordinator.access_token("outlook", "outlook-work")
+
+
+@pytest.mark.parametrize("provider", ["gmail", "outlook"])
+def test_oauth_rejects_a_different_provider_mailbox(
+    tmp_path: Path, provider: str
+) -> None:
+    database = Database(tmp_path / f"{provider}.db")
+    MailAccountService(database).upsert(
+        "work", "expected@example.com", adapter=provider
+    )
+    secrets = MemorySecrets()
+    secrets.named[f"oauth.{provider}.client_id"] = "client"
+    coordinator = OAuthCoordinator(
+        OAuthConnectionService(database),
+        secrets,
+        token_request=lambda url, payload: {
+            "access_token": "access-secret",
+            "refresh_token": "refresh-secret",
+        },
+        identity_request=lambda selected, token: "other@example.com",
+    )
+    authorization_url, _ = coordinator.start(
+        provider, "work", f"http://127.0.0.1/{provider}/callback"
+    )
+    state = parse_qs(urlsplit(authorization_url).query)["state"][0]
+    with pytest.raises(PermissionError, match="does not match"):
+        coordinator.complete(provider, state, "provider-code")
+    assert f"oauth.{provider}.work.token" not in secrets.named
 
 
 def test_stage7_migration_creates_recoverable_0009_backup(tmp_path: Path) -> None:

@@ -334,6 +334,7 @@ def upgrade_database(path: Path) -> None:
     script = ScriptDirectory.from_config(config)
     current = _database_revision(path)
     if current == "legacy":
+        _validate_legacy_0002(path)
         _backup_before_upgrade(path, "0003")
         command.stamp(config, "0002")
         current = "0002"
@@ -341,6 +342,37 @@ def upgrade_database(path: Path) -> None:
     for revision in pending:
         _backup_before_upgrade(path, revision.revision)
         command.upgrade(config, revision.revision)
+
+
+_LEGACY_0002_COLUMNS = {
+    "applications": {"application_id", "create_key", "company", "role", "values"},
+    "application_events": {"event_id", "application_id", "idempotency_key"},
+    "field_provenance": {"provenance_id", "application_id", "field"},
+    "email_records": {"email_id", "account_id", "raw_hash"},
+    "sync_batches": {"batch_id", "batch_type", "idempotency_key"},
+    "background_jobs": {"job_id", "status", "idempotency_key"},
+    "job_checkpoints": {"checkpoint_id", "job_id", "payload"},
+    "summary_versions": {"summary_id", "application_id", "version"},
+}
+
+
+def _validate_legacy_0002(path: Path) -> None:
+    missing: list[str] = []
+    with sqlite3.connect(path) as connection:
+        for table, required_columns in _LEGACY_0002_COLUMNS.items():
+            columns = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT name FROM pragma_table_info(?)", (table,)
+                )
+            }
+            if not required_columns.issubset(columns):
+                missing.append(table)
+    if missing:
+        raise RuntimeError(
+            "unversioned database does not match CareerPilot 0002: "
+            + ", ".join(missing)
+        )
 
 
 def _database_revision(path: Path) -> str | None:

@@ -43,6 +43,7 @@ PROVIDERS: dict[str, dict[str, object]] = {
             "email",
             "offline_access",
             "https://graph.microsoft.com/Mail.Read",
+            "https://graph.microsoft.com/User.Read",
         ],
         "extra": {"prompt": "select_account"},
     },
@@ -220,6 +221,7 @@ class OAuthConnectionService:
 
 
 TokenRequest = Any
+IdentityRequest = Any
 
 
 def request_token(url: str, payload: dict[str, str]) -> dict[str, object]:
@@ -245,6 +247,39 @@ def request_token(url: str, payload: dict[str, str]) -> dict[str, object]:
     return value
 
 
+def request_identity(provider: Provider, access_token: str) -> str:
+    url = (
+        "https://gmail.googleapis.com/gmail/v1/users/me/profile"
+        if provider == "gmail"
+        else "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName"
+    )
+    request = Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+            "User-Agent": "CareerPilot/0.1",
+        },
+    )
+    try:
+        with urlopen(request, timeout=20) as response:
+            value = json.loads(response.read(1_000_000))
+    except HTTPError as exc:
+        raise PermissionError("OAuth account identity was rejected") from exc
+    except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        raise ConnectionError("OAuth account identity check failed") from exc
+    if not isinstance(value, dict):
+        raise ConnectionError("OAuth provider returned invalid identity JSON")
+    email = (
+        value.get("emailAddress")
+        if provider == "gmail"
+        else value.get("mail") or value.get("userPrincipalName")
+    )
+    if not isinstance(email, str) or not email.strip():
+        raise PermissionError("OAuth provider did not return an email address")
+    return email
+
+
 class OAuthCoordinator:
     def __init__(
         self,
@@ -252,10 +287,12 @@ class OAuthCoordinator:
         secret_store: SecretStore,
         *,
         token_request: TokenRequest = request_token,
+        identity_request: IdentityRequest = request_identity,
     ) -> None:
         self.connections = connections
         self.secret_store = secret_store
         self.token_request = token_request
+        self.identity_request = identity_request
         self.pending: dict[str, dict[str, object]] = {}
         self.runtime_tokens: dict[str, dict[str, object]] = {}
         self.lock = threading.Lock()
@@ -281,15 +318,16 @@ class OAuthCoordinator:
         state = secrets.token_urlsafe(32)
         verifier = secrets.token_urlsafe(64)
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+        connection = self.connections.set_status(account_id, provider, "authorizing")
         with self.lock:
             self.pending[state] = {
                 "provider": provider,
                 "account_id": account_id,
                 "redirect_uri": redirect_uri,
                 "verifier": verifier,
+                "email": connection.email.strip().casefold(),
                 "created_at": utcnow(),
             }
-        connection = self.connections.set_status(account_id, provider, "authorizing")
         query = {
             "client_id": client_id,
             "redirect_uri": redirect_uri,
@@ -326,6 +364,12 @@ class OAuthCoordinator:
         if client_secret := self.secret_store.get_named(f"oauth.{provider}.client_secret"):
             payload["client_secret"] = client_secret
         token = self.token_request(str(PROVIDERS[provider]["token_url"]), payload)
+        normalized = self._normalized_token(token)
+        actual_email = self.identity_request(
+            provider, str(normalized["access_token"])
+        ).strip().casefold()
+        if actual_email != pending["email"]:
+            raise PermissionError("OAuth account email does not match the configured mailbox")
         return self._store_token(provider, str(pending["account_id"]), token)
 
     def access_token(self, provider: Provider, account_id: str) -> str:
@@ -361,11 +405,13 @@ class OAuthCoordinator:
         return str(connection["access_token"])
 
     def disconnect(self, provider: Provider, account_id: str) -> OAuthConnection:
+        name = self.token_name(provider, account_id)
         deleter = getattr(self.secret_store, "delete_named", None)
         if deleter:
-            deleter(self.token_name(provider, account_id))
+            deleter(name)
         elif self.has_token(provider, account_id):
             raise RuntimeError("secret store cannot remove OAuth tokens")
+        self.runtime_tokens.pop(name, None)
         return self.connections.set_status(account_id, provider, "disconnected")
 
     def _store_token(

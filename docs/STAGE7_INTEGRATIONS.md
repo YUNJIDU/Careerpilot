@@ -5,7 +5,7 @@ Stage 7 在不改变 Application Core 的前提下增加 Gmail、Outlook、提�
 ## 1. Gmail 与 Outlook
 
 - Gmail 使用 Gmail API，只请求 `gmail.readonly`。
-- Outlook 使用 Microsoft Graph，只请求 `Mail.Read`。
+- Outlook 使用 Microsoft Graph，只请求读取邮件所需的 `Mail.Read` 和核对授权邮箱所需的 `User.Read`。
 - 两者使用 Authorization Code + PKCE；刷新令牌进入 Windows Credential Manager 或 Docker 启动时注入的只读 Secret 文件。
 - SQLite 只保存账户、提供商、权限、状态和过期时间，不保存 access token、refresh token、Client ID 或 Client Secret。
 - 邮件以原始 MIME 进入 `MailAdapter v1` 和现有解析链；附件仍然先保存元数据，用户逐个批准后才读取内容。

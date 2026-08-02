@@ -56,7 +56,7 @@ Docker Desktop must be installed and running. Build from the repository root:
 ```powershell
 docker build --tag careerpilot:local .
 New-Item -ItemType Directory -Force .\data
-docker run --detach --name careerpilot --publish 9998:9998 --publish 9999:9998 --mount "type=bind,source=$((Resolve-Path .\data).Path),target=/app/data" careerpilot:local
+docker run --detach --name careerpilot --publish 127.0.0.1:9998:9998 --publish 127.0.0.1:9999:9998 --mount "type=bind,source=$((Resolve-Path .\data).Path),target=/app/data" careerpilot:local
 ```
 
 Open `http://127.0.0.1:9999`; the API remains available on port `9998`.
@@ -95,8 +95,8 @@ single-line secret files inside it. Restrict access to that directory. Then:
 $careerData = (Resolve-Path .\data).Path
 $careerSecrets = (Resolve-Path .\secrets).Path
 docker run --detach --name careerpilot `
-  --publish 9998:9998 `
-  --publish 9999:9998 `
+  --publish 127.0.0.1:9998:9998 `
+  --publish 127.0.0.1:9999:9998 `
   --mount "type=bind,source=$careerData,target=/app/data" `
   --mount "type=bind,source=$careerSecrets,target=/run/secrets,readonly" `
   --env CAREERPILOT_MAIL_SECRET_FILE=/run/secrets/mail `
