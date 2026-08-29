@@ -91,7 +91,7 @@ def test_manual_row_without_id_is_imported_and_preserved(tmp_path: Path) -> None
     workbook["Tracker"]["R2"] = None
     workbook.save(tracker)
 
-    assert sync.import_workbook(tracker, "manual-import") == 1
+    assert sync.import_workbook(tracker, "manual-import")["created"] == 1
     [application] = applications.list()
     assert application.values["备注"] == "手动添加"
     applications.apply_field_change(
@@ -137,7 +137,12 @@ def test_application_and_excel_job_api(tmp_path: Path) -> None:
     client = TestClient(create_app(data_dir=tmp_path))
     response = client.post(
         "/api/v1/excel-sync-jobs",
-        json={"path": "tracker.xlsx", "direction": "import", "idempotency_key": "api-import"},
+        json={
+            "path": "tracker.xlsx",
+            "direction": "import",
+            "idempotency_key": "api-import",
+            "destructive_confirmed": True,
+        },
     )
     assert response.status_code == 200
     assert client.get("/api/v1/applications").json()[0]["company"] == "API Co"

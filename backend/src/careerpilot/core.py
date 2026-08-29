@@ -12,7 +12,6 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     JSON,
-    Boolean,
     DateTime,
     ForeignKey,
     Integer,
@@ -20,13 +19,15 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    delete,
     desc,
     or_,
     select,
+    update,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
-from careerpilot.excel import COLUMNS, TrackerRow, read_tracker, write_tracker
+from careerpilot.excel import COLUMNS, RESUME_COLUMN, TrackerRow, read_tracker, write_tracker
 
 PROCESS_FIELDS = (
     "简历通过",
@@ -148,35 +149,6 @@ class EmailRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-class MailAccountRecord(Base):
-    __tablename__ = "mail_accounts"
-    __table_args__ = (UniqueConstraint("adapter", "email"),)
-    account_id: Mapped[str] = mapped_column(String(100), primary_key=True)
-    adapter: Mapped[str] = mapped_column(String(30))
-    email: Mapped[str] = mapped_column(String(320))
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-
-class AttachmentRecord(Base):
-    __tablename__ = "attachments"
-    __table_args__ = (UniqueConstraint("account_id", "source_id"),)
-    attachment_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    email_id: Mapped[str] = mapped_column(ForeignKey("email_records.email_id"))
-    account_id: Mapped[str] = mapped_column(String(100))
-    source_id: Mapped[str] = mapped_column(String(300))
-    filename: Mapped[str] = mapped_column(String(255))
-    content_type: Mapped[str] = mapped_column(String(200))
-    size: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    allowed: Mapped[bool] = mapped_column(Boolean)
-    status: Mapped[str] = mapped_column(String(30))
-    rejection_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-
 class ResumeVersionRecord(Base):
     __tablename__ = "resume_versions"
     __table_args__ = (
@@ -196,11 +168,10 @@ class ResumeVersionRecord(Base):
 
 class ApplicationResumeRecord(Base):
     __tablename__ = "application_resumes"
-    __table_args__ = (UniqueConstraint("application_id", "version_id"),)
-    link_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    application_id: Mapped[str] = mapped_column(ForeignKey("applications.application_id"))
+    application_id: Mapped[str] = mapped_column(
+        ForeignKey("applications.application_id"), primary_key=True
+    )
     version_id: Mapped[str] = mapped_column(ForeignKey("resume_versions.version_id"))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class SyncBatchRecord(Base):
@@ -244,63 +215,6 @@ class SummaryVersionRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
-class JDVersionRecord(Base):
-    __tablename__ = "jd_versions"
-    __table_args__ = (
-        UniqueConstraint("application_id", "version"),
-        UniqueConstraint("application_id", "create_key"),
-    )
-    jd_version_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    application_id: Mapped[str] = mapped_column(ForeignKey("applications.application_id"))
-    version: Mapped[int] = mapped_column(Integer)
-    create_key: Mapped[str] = mapped_column(String(200))
-    source_type: Mapped[str] = mapped_column(String(20))
-    source_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
-    source_title: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    raw_text: Mapped[str] = mapped_column(Text)
-    content_hash: Mapped[str] = mapped_column(String(64))
-    structure: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-
-class CompanyResearchVersionRecord(Base):
-    __tablename__ = "company_research_versions"
-    __table_args__ = (UniqueConstraint("application_id", "version"),)
-    research_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    application_id: Mapped[str] = mapped_column(ForeignKey("applications.application_id"))
-    version: Mapped[int] = mapped_column(Integer)
-    content: Mapped[dict[str, Any]] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-
-class EvidenceMapVersionRecord(Base):
-    __tablename__ = "evidence_map_versions"
-    __table_args__ = (UniqueConstraint("jd_version_id", "resume_version_id", "version"),)
-    map_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    application_id: Mapped[str] = mapped_column(ForeignKey("applications.application_id"))
-    jd_version_id: Mapped[str] = mapped_column(ForeignKey("jd_versions.jd_version_id"))
-    resume_version_id: Mapped[str] = mapped_column(
-        ForeignKey("resume_versions.version_id")
-    )
-    version: Mapped[int] = mapped_column(Integer)
-    content: Mapped[dict[str, Any]] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-
-class ReviewRecord(Base):
-    __tablename__ = "review_records"
-    review_id: Mapped[str] = mapped_column(String(36), primary_key=True)
-    application_id: Mapped[str] = mapped_column(ForeignKey("applications.application_id"))
-    artifact_type: Mapped[str] = mapped_column(String(30))
-    artifact_id: Mapped[str] = mapped_column(String(36))
-    item_id: Mapped[str] = mapped_column(String(80))
-    decision: Mapped[str] = mapped_column(String(30))
-    note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    idempotency_key: Mapped[str] = mapped_column(String(200), unique=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-
 class Database:
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -325,86 +239,12 @@ class Database:
 def upgrade_database(path: Path) -> None:
     from alembic import command
     from alembic.config import Config
-    from alembic.script import ScriptDirectory
 
     backend = Path(__file__).parents[2]
     config = Config(str(backend / "alembic.ini"))
     config.set_main_option("script_location", str(backend / "migrations"))
     config.set_main_option("sqlalchemy.url", f"sqlite:///{path}")
-    script = ScriptDirectory.from_config(config)
-    current = _database_revision(path)
-    if current == "legacy":
-        _validate_legacy_0002(path)
-        _backup_before_upgrade(path, "0003")
-        command.stamp(config, "0002")
-        current = "0002"
-    pending = list(reversed(list(script.iterate_revisions("heads", current or "base"))))
-    for revision in pending:
-        _backup_before_upgrade(path, revision.revision)
-        command.upgrade(config, revision.revision)
-
-
-_LEGACY_0002_COLUMNS = {
-    "applications": {"application_id", "create_key", "company", "role", "values"},
-    "application_events": {"event_id", "application_id", "idempotency_key"},
-    "field_provenance": {"provenance_id", "application_id", "field"},
-    "email_records": {"email_id", "account_id", "raw_hash"},
-    "sync_batches": {"batch_id", "batch_type", "idempotency_key"},
-    "background_jobs": {"job_id", "status", "idempotency_key"},
-    "job_checkpoints": {"checkpoint_id", "job_id", "payload"},
-    "summary_versions": {"summary_id", "application_id", "version"},
-}
-
-
-def _validate_legacy_0002(path: Path) -> None:
-    missing: list[str] = []
-    with sqlite3.connect(path) as connection:
-        for table, required_columns in _LEGACY_0002_COLUMNS.items():
-            columns = {
-                str(row[0])
-                for row in connection.execute(
-                    "SELECT name FROM pragma_table_info(?)", (table,)
-                )
-            }
-            if not required_columns.issubset(columns):
-                missing.append(table)
-    if missing:
-        raise RuntimeError(
-            "unversioned database does not match CareerPilot 0002: "
-            + ", ".join(missing)
-        )
-
-
-def _database_revision(path: Path) -> str | None:
-    if not path.is_file():
-        return None
-    with sqlite3.connect(path) as connection:
-        has_tables = connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' LIMIT 1"
-        ).fetchone()
-        if not has_tables:
-            return None
-        try:
-            revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()
-        except sqlite3.OperationalError:
-            return "legacy"
-        return str(revision[0]) if revision else "legacy"
-
-
-def _backup_before_upgrade(path: Path, target_revision: str) -> None:
-    if not path.is_file():
-        return
-    with sqlite3.connect(path) as source:
-        has_tables = source.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' LIMIT 1"
-        ).fetchone()
-        if not has_tables:
-            return
-        backup = path.with_name(f"{path.name}.pre-{target_revision}.bak")
-        if backup.exists():
-            return
-        with sqlite3.connect(backup) as target:
-            source.backup(target)
+    command.upgrade(config, "head")
 
 
 @dataclass
@@ -436,31 +276,12 @@ class StoredEmail:
 
 
 @dataclass
-class MailAccount:
-    account_id: str
-    adapter: str
-    email: str
-    enabled: bool
+class SummaryVersion:
+    summary_id: UUID
+    application_id: UUID
+    version: int
+    content: dict[str, Any]
     created_at: datetime
-    updated_at: datetime
-
-
-@dataclass
-class Attachment:
-    attachment_id: UUID
-    email_id: str
-    application_id: UUID | None
-    account_id: str
-    source_id: str
-    filename: str
-    content_type: str
-    size: int | None
-    allowed: bool
-    status: str
-    rejection_reason: str | None
-    content_hash: str | None
-    created_at: datetime
-    updated_at: datetime
 
 
 @dataclass
@@ -474,15 +295,6 @@ class ResumeVersion:
     size: int
     content_hash: str
     application_ids: tuple[UUID, ...]
-    created_at: datetime
-
-
-@dataclass
-class SummaryVersion:
-    summary_id: UUID
-    application_id: UUID
-    version: int
-    content: dict[str, Any]
     created_at: datetime
 
 
@@ -569,10 +381,10 @@ class ApplicationService:
             record = session.get(ApplicationRecord, str(application_id))
             if not record:
                 raise KeyError(application_id)
-            if duplicate:
-                return _application(record)
             if expected_version is not None and record.version != expected_version:
                 raise ValueError("application version conflict")
+            if duplicate:
+                return _application(record)
             terminal = terminal_result(field, value)
             if field in PROCESS_FIELDS and terminal:
                 value = terminal[1]
@@ -731,14 +543,80 @@ class ExcelSyncService:
     def __init__(self, database: Database, applications: ApplicationService) -> None:
         self.database, self.applications = database, applications
 
-    def import_workbook(self, path: Path, idempotency_key: str) -> int:
+    def import_workbook(self, path: Path, idempotency_key: str) -> dict[str, int]:
         rows = read_tracker(path)
         with self.database.session() as session:
             existing = session.scalar(
                 select(SyncBatchRecord).where(SyncBatchRecord.idempotency_key == idempotency_key)
             )
             if existing:
-                return 0
+                return {"created": 0, "updated": 0, "deleted": 0, "resume_mapped": 0}
+
+        current = self.applications.list()
+        by_id = {item.application_id: item for item in current}
+        by_identity = {
+            (normalize_identity(item.company), normalize_identity(item.role)): item
+            for item in current
+        }
+        prepared: list[tuple[TrackerRow, UUID]] = []
+        for row in rows:
+            company = str(row.values.get("公司名称") or "").strip()
+            role = str(row.values.get("岗位") or "").strip()
+            if not company or not role:
+                raise ValueError("company and role are required for every Excel row")
+            target_id = row.application_id
+            if target_id not in by_id:
+                match = by_identity.get((normalize_identity(company), normalize_identity(role)))
+                if match:
+                    target_id = match.application_id
+            prepared.append((row, target_id))
+
+        resume_links: dict[UUID, str | None] = {}
+        if rows and rows[0].resume_column_present:
+            with self.database.session() as session:
+                versions = list(session.scalars(select(ResumeVersionRecord)))
+            latest: dict[str, ResumeVersionRecord] = {}
+            for version in versions:
+                if (
+                    version.resume_id not in latest
+                    or version.version > latest[version.resume_id].version
+                ):
+                    latest[version.resume_id] = version
+            labels: dict[str, list[str]] = {}
+            for resume_id, version in latest.items():
+                labels.setdefault(version.label.casefold(), []).append(resume_id)
+            for row, target_id in prepared:
+                reference = str(row.values.get(RESUME_COLUMN) or "").strip()
+                if not reference:
+                    resume_links[target_id] = None
+                    continue
+                match = re.fullmatch(r"(.+?)(?:@v(\d+))?", reference)
+                if not match:
+                    raise ValueError(f"invalid current resume: {reference}")
+                label, requested_version = match.group(1).strip(), match.group(2)
+                resume_ids = labels.get(label.casefold(), [])
+                if len(resume_ids) != 1:
+                    raise ValueError(f"current resume is missing or ambiguous: {reference}")
+                candidates = [item for item in versions if item.resume_id == resume_ids[0]]
+                selected = (
+                    next(
+                        (item for item in candidates if item.version == int(requested_version)),
+                        None,
+                    )
+                    if requested_version
+                    else max(candidates, key=lambda item: item.version)
+                )
+                if not selected:
+                    raise ValueError(f"resume version does not exist: {reference}")
+                resume_links[target_id] = selected.version_id
+
+        backup = self.database.path.with_name("careerpilot.db.pre-excel-import.bak")
+        with sqlite3.connect(self.database.path) as source, sqlite3.connect(backup) as destination:
+            source.backup(destination)
+
+        input_ids = {target_id for _, target_id in prepared}
+        stats = {"created": 0, "updated": 0, "deleted": 0, "resume_mapped": 0}
+        with self.database.session() as session:
             session.add(
                 SyncBatchRecord(
                     batch_id=str(uuid4()),
@@ -747,67 +625,111 @@ class ExcelSyncService:
                     baseline={"rows": len(rows)},
                 )
             )
-        for row in rows:
-            target_id = row.application_id
-            try:
-                current = self.applications.get(target_id)
-            except KeyError:
-                company = str(row.values.get("公司名称") or "")
-                role = str(row.values.get("岗位") or "")
-                current = next(
-                    (
-                        application
-                        for application in self.applications.list()
-                        if normalize_identity(application.company) == normalize_identity(company)
-                        and normalize_identity(application.role) == normalize_identity(role)
-                    ),
-                    None,
-                )
-                if current:
-                    target_id = current.application_id
+            records = {
+                UUID(item.application_id): item
+                for item in session.scalars(select(ApplicationRecord))
+            }
+            for row, target_id in prepared:
+                values = {field: _json_value(row.values.get(field)) for field in COLUMNS}
+                for field in PROCESS_FIELDS:
+                    terminal = terminal_result(field, values.get(field))
+                    if terminal:
+                        values[field] = terminal[1]
+                        values["当前阶段"] = terminal_label(*terminal)
+                company, role = str(values["公司名称"]), str(values["岗位"])
+                record = records.get(target_id)
+                if record is None:
+                    record = ApplicationRecord(
+                        application_id=str(target_id),
+                        create_key=f"excel:create:{target_id}",
+                        company=company,
+                        role=role,
+                        values=values,
+                        user_fields=[
+                            field for field, value in values.items() if value not in (None, "")
+                        ],
+                    )
+                    session.add(record)
+                    records[target_id] = record
+                    stats["created"] += 1
                 else:
-                    current = self.applications.create(
-                        company,
-                        role,
-                        idempotency_key=f"excel:create:{target_id}",
-                        application_id=target_id,
-                        values=row.values,
+                    changed = [
+                        field for field in COLUMNS if record.values.get(field) != values[field]
+                    ]
+                    for field in changed:
+                        session.add(
+                            ProvenanceRecord(
+                                provenance_id=str(uuid4()),
+                                application_id=str(target_id),
+                                field=field,
+                                value=values[field],
+                                source="user",
+                                evidence=None,
+                                idempotency_key=f"{idempotency_key}:{target_id}:{field}",
+                            )
+                        )
+                    if changed:
+                        record.company, record.role, record.values = company, role, values
+                        record.user_fields = [
+                            field for field, value in values.items() if value not in (None, "")
+                        ]
+                        record.version += 1
+                        record.updated_at = utcnow()
+                        stats["updated"] += 1
+                if target_id in resume_links:
+                    session.execute(
+                        delete(ApplicationResumeRecord).where(
+                            ApplicationResumeRecord.application_id == str(target_id)
+                        )
                     )
-            for field, value in row.values.items():
-                if value != current.values.get(field) or (
-                    row.generated_id and value not in (None, "")
-                ):
-                    self.applications.apply_field_change(
-                        target_id,
-                        field,
-                        value,
-                        source="user",
-                        idempotency_key=f"{idempotency_key}:{target_id}:{field}",
-                    )
-            terminal = next(
-                (
-                    terminal_result(field, value)
-                    for field, value in row.values.items()
-                    if terminal_result(field, value)
-                ),
-                None,
-            )
-            if terminal:
-                self.applications.apply_field_change(
-                    target_id,
-                    "当前阶段",
-                    terminal_label(*terminal),
-                    source="user",
-                    idempotency_key=f"{idempotency_key}:{target_id}:terminal",
+                    if resume_links[target_id]:
+                        session.add(
+                            ApplicationResumeRecord(
+                                application_id=str(target_id),
+                                version_id=str(resume_links[target_id]),
+                            )
+                        )
+                    stats["resume_mapped"] += 1
+
+            deleted_ids = [item for item in records if item not in input_ids]
+            if deleted_ids:
+                ids = [str(item) for item in deleted_ids]
+                session.execute(
+                    update(EmailRecord)
+                    .where(EmailRecord.application_id.in_(ids))
+                    .values(application_id=None)
                 )
-        return len(rows)
+                for model in (
+                    ApplicationResumeRecord,
+                    SummaryVersionRecord,
+                    ProvenanceRecord,
+                    ApplicationEventRecord,
+                ):
+                    session.execute(delete(model).where(model.application_id.in_(ids)))
+                session.execute(
+                    delete(ApplicationRecord).where(ApplicationRecord.application_id.in_(ids))
+                )
+                stats["deleted"] = len(ids)
+        return stats
 
     def export_workbook(self, path: Path) -> Path:
+        with self.database.session() as session:
+            links = {
+                link.application_id: session.get(ResumeVersionRecord, link.version_id)
+                for link in session.scalars(select(ApplicationResumeRecord))
+            }
         rows = [
             TrackerRow(
                 application_id=application.application_id,
                 row_version=application.version,
-                values=application.values,
+                values={
+                    **application.values,
+                    RESUME_COLUMN: (
+                        f"{links[str(application.application_id)].label}@v{links[str(application.application_id)].version}"
+                        if str(application.application_id) in links
+                        else None
+                    ),
+                },
             )
             for application in self.applications.list()
         ]
@@ -890,179 +812,6 @@ class EmailService:
             )
 
 
-class MailAccountService:
-    def __init__(self, database: Database) -> None:
-        self.database = database
-
-    @staticmethod
-    def _view(record: MailAccountRecord) -> MailAccount:
-        return MailAccount(
-            account_id=record.account_id,
-            adapter=record.adapter,
-            email=record.email,
-            enabled=record.enabled,
-            created_at=record.created_at,
-            updated_at=record.updated_at,
-        )
-
-    def list(self) -> list[MailAccount]:
-        with self.database.session() as session:
-            records = session.scalars(
-                select(MailAccountRecord).order_by(MailAccountRecord.created_at)
-            )
-            return [self._view(record) for record in records]
-
-    def get(self, account_id: str) -> MailAccount:
-        with self.database.session() as session:
-            record = session.get(MailAccountRecord, account_id)
-            if not record:
-                raise KeyError(account_id)
-            return self._view(record)
-
-    def upsert(
-        self,
-        account_id: str,
-        email: str,
-        *,
-        adapter: str = "imap163",
-        enabled: bool = True,
-    ) -> MailAccount:
-        normalized_email = email.strip().casefold()
-        with self.database.session() as session:
-            record = session.get(MailAccountRecord, account_id)
-            if record:
-                if (record.adapter, record.email) != (adapter, normalized_email):
-                    raise ValueError("mail account identity cannot be changed")
-                record.enabled = enabled
-                record.updated_at = utcnow()
-                return self._view(record)
-            duplicate = session.scalar(
-                select(MailAccountRecord).where(
-                    MailAccountRecord.adapter == adapter,
-                    MailAccountRecord.email == normalized_email,
-                )
-            )
-            if duplicate:
-                raise ValueError("mailbox is already registered")
-            record = MailAccountRecord(
-                account_id=account_id,
-                adapter=adapter,
-                email=normalized_email,
-                enabled=enabled,
-            )
-            session.add(record)
-            session.flush()
-            return self._view(record)
-
-    def set_enabled(self, account_id: str, enabled: bool) -> MailAccount:
-        with self.database.session() as session:
-            record = session.get(MailAccountRecord, account_id)
-            if not record:
-                raise KeyError(account_id)
-            record.enabled = enabled
-            record.updated_at = utcnow()
-            return self._view(record)
-
-
-class AttachmentService:
-    def __init__(self, database: Database) -> None:
-        self.database = database
-
-    @staticmethod
-    def _view(session: Session, record: AttachmentRecord) -> Attachment:
-        email = session.get(EmailRecord, record.email_id)
-        return Attachment(
-            attachment_id=UUID(record.attachment_id),
-            email_id=record.email_id,
-            application_id=(
-                UUID(str(email.application_id)) if email and email.application_id else None
-            ),
-            account_id=record.account_id,
-            source_id=record.source_id,
-            filename=record.filename,
-            content_type=record.content_type,
-            size=record.size,
-            allowed=record.allowed,
-            status=record.status,
-            rejection_reason=record.rejection_reason,
-            content_hash=record.content_hash,
-            created_at=record.created_at,
-            updated_at=record.updated_at,
-        )
-
-    def record_metadata(
-        self,
-        email_id: str,
-        account_id: str,
-        items: list[dict[str, Any]],
-    ) -> None:
-        with self.database.session() as session:
-            if not session.get(EmailRecord, email_id):
-                raise KeyError(email_id)
-            for item in items:
-                existing = session.scalar(
-                    select(AttachmentRecord).where(
-                        AttachmentRecord.account_id == account_id,
-                        AttachmentRecord.source_id == str(item["source_id"]),
-                    )
-                )
-                if existing:
-                    continue
-                allowed = bool(item["allowed"])
-                session.add(
-                    AttachmentRecord(
-                        attachment_id=str(uuid4()),
-                        email_id=email_id,
-                        account_id=account_id,
-                        source_id=str(item["source_id"]),
-                        filename=str(item["filename"]),
-                        content_type=str(item["content_type"]),
-                        size=(int(item["size"]) if item.get("size") is not None else None),
-                        allowed=allowed,
-                        status="pending" if allowed else "rejected",
-                        rejection_reason=(
-                            None if allowed else str(item.get("rejection_reason") or "unsupported")
-                        ),
-                    )
-                )
-
-    def list(self, application_id: UUID | None = None) -> list[Attachment]:
-        with self.database.session() as session:
-            query = select(AttachmentRecord).order_by(desc(AttachmentRecord.created_at))
-            if application_id:
-                email_ids = select(EmailRecord.email_id).where(
-                    EmailRecord.application_id == str(application_id)
-                )
-                query = query.where(AttachmentRecord.email_id.in_(email_ids))
-            return [self._view(session, record) for record in session.scalars(query)]
-
-    def get(self, attachment_id: UUID) -> Attachment:
-        with self.database.session() as session:
-            record = session.get(AttachmentRecord, str(attachment_id))
-            if not record:
-                raise KeyError(attachment_id)
-            return self._view(session, record)
-
-    def set_result(
-        self,
-        attachment_id: UUID,
-        *,
-        status: str,
-        content_hash: str | None = None,
-        rejection_reason: str | None = None,
-    ) -> Attachment:
-        with self.database.session() as session:
-            record = session.get(AttachmentRecord, str(attachment_id))
-            if not record:
-                raise KeyError(attachment_id)
-            record.status = status
-            record.content_hash = content_hash
-            record.rejection_reason = rejection_reason
-            record.updated_at = utcnow()
-            session.flush()
-            return self._view(session, record)
-
-
 class ResumeService:
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -1087,27 +836,6 @@ class ResumeService:
             created_at=record.created_at,
         )
 
-    @staticmethod
-    def _link(session: Session, version_id: str, application_id: UUID | None) -> None:
-        if application_id is None:
-            return
-        if not session.get(ApplicationRecord, str(application_id)):
-            raise KeyError(application_id)
-        existing = session.scalar(
-            select(ApplicationResumeRecord).where(
-                ApplicationResumeRecord.application_id == str(application_id),
-                ApplicationResumeRecord.version_id == version_id,
-            )
-        )
-        if not existing:
-            session.add(
-                ApplicationResumeRecord(
-                    link_id=str(uuid4()),
-                    application_id=str(application_id),
-                    version_id=version_id,
-                )
-            )
-
     def create_version(
         self,
         *,
@@ -1117,9 +845,8 @@ class ResumeService:
         size: int,
         content_hash: str,
         resume_id: UUID | None = None,
-        application_id: UUID | None = None,
     ) -> ResumeVersion:
-        existing_resume_requested = resume_id is not None
+        requested = resume_id is not None
         resume_id = resume_id or uuid4()
         with self.database.session() as session:
             records = list(
@@ -1129,15 +856,10 @@ class ResumeService:
                     )
                 )
             )
-            if not records and existing_resume_requested:
+            if requested and not records:
                 raise KeyError(resume_id)
-            duplicate = next(
-                (record for record in records if record.content_hash == content_hash), None
-            )
-            if duplicate:
-                self._link(session, duplicate.version_id, application_id)
-                session.flush()
-                return self._view(session, duplicate)
+            if any(record.content_hash == content_hash for record in records):
+                raise ValueError("this resume version already exists")
             record = ResumeVersionRecord(
                 version_id=str(uuid4()),
                 resume_id=str(resume_id),
@@ -1149,8 +871,6 @@ class ResumeService:
                 content_hash=content_hash,
             )
             session.add(record)
-            session.flush()
-            self._link(session, record.version_id, application_id)
             session.flush()
             return self._view(session, record)
 
@@ -1168,38 +888,51 @@ class ResumeService:
                 raise KeyError(version_id)
             return self._view(session, record)
 
-    def link(self, version_id: UUID, application_id: UUID) -> ResumeVersion:
+    def set_current(self, version_id: UUID, application_id: UUID) -> ResumeVersion:
         with self.database.session() as session:
             record = session.get(ResumeVersionRecord, str(version_id))
-            if not record:
+            if not record or not session.get(ApplicationRecord, str(application_id)):
                 raise KeyError(version_id)
-            self._link(session, record.version_id, application_id)
+            session.execute(
+                delete(ApplicationResumeRecord).where(
+                    ApplicationResumeRecord.application_id == str(application_id)
+                )
+            )
+            session.add(
+                ApplicationResumeRecord(
+                    application_id=str(application_id), version_id=str(version_id)
+                )
+            )
             session.flush()
             return self._view(session, record)
+
+    def delete_resume(self, resume_id: UUID) -> tuple[str, ...]:
+        with self.database.session() as session:
+            records = list(
+                session.scalars(
+                    select(ResumeVersionRecord).where(
+                        ResumeVersionRecord.resume_id == str(resume_id)
+                    )
+                )
+            )
+            if not records:
+                raise KeyError(resume_id)
+            version_ids = [record.version_id for record in records]
+            hashes = tuple({record.content_hash for record in records})
+            session.execute(
+                delete(ApplicationResumeRecord).where(
+                    ApplicationResumeRecord.version_id.in_(version_ids)
+                )
+            )
+            session.execute(
+                delete(ResumeVersionRecord).where(ResumeVersionRecord.resume_id == str(resume_id))
+            )
+            return hashes
 
 
 class JobService:
     def __init__(self, database: Database) -> None:
         self.database = database
-
-    def recover_interrupted(self) -> int:
-        with self.database.session() as session:
-            records = list(
-                session.scalars(
-                    select(BackgroundJobRecord).where(
-                        BackgroundJobRecord.status.in_(("pending", "running"))
-                    )
-                )
-            )
-            for record in records:
-                record.status = "failed"
-                record.current_step = "failed"
-                record.error_code = "job.interrupted"
-                record.error_message_safe = (
-                    "The previous process stopped before this job completed."
-                )
-                record.updated_at = utcnow()
-            return len(records)
 
     def create(self, job_type: str, idempotency_key: str) -> PersistentJob:
         with self.database.session() as session:
@@ -1247,49 +980,6 @@ class JobService:
             session.flush()
             return self._view(session, record)
 
-    def pause(self, job_id: UUID, step: str, payload: dict[str, Any]) -> PersistentJob:
-        self.progress(job_id, step, payload)
-        with self.database.session() as session:
-            record = session.get(BackgroundJobRecord, str(job_id))
-            if not record:
-                raise KeyError(job_id)
-            record.status = "waiting_approval"
-            record.updated_at = utcnow()
-            session.flush()
-            return self._view(session, record)
-
-    def resume(self, job_id: UUID, step: str, payload: dict[str, Any]) -> PersistentJob:
-        self.progress(job_id, step, payload)
-        with self.database.session() as session:
-            record = session.get(BackgroundJobRecord, str(job_id))
-            if not record:
-                raise KeyError(job_id)
-            record.error_code = None
-            record.error_message_safe = None
-            session.flush()
-            return self._view(session, record)
-
-    def stop(
-        self,
-        job_id: UUID,
-        status: str,
-        error_code: str,
-        message: str,
-    ) -> PersistentJob:
-        if status not in {"cancelled", "budget_exhausted", "timed_out"}:
-            raise ValueError("invalid terminal job status")
-        with self.database.session() as session:
-            record = session.get(BackgroundJobRecord, str(job_id))
-            if not record:
-                raise KeyError(job_id)
-            record.status = status
-            record.current_step = status
-            record.error_code = error_code[:100]
-            record.error_message_safe = message[:500]
-            record.updated_at = utcnow()
-            session.flush()
-            return self._view(session, record)
-
     def get(self, job_id: UUID) -> PersistentJob:
         with self.database.session() as session:
             record = session.get(BackgroundJobRecord, str(job_id))
@@ -1304,21 +994,13 @@ class JobService:
             )
             return [self._view(session, record) for record in records]
 
-    def complete(
-        self,
-        job_id: UUID,
-        payload: dict[str, Any],
-        *,
-        step: str = "completed",
-    ) -> PersistentJob:
-        self.progress(job_id, step, payload)
+    def complete(self, job_id: UUID, payload: dict[str, Any]) -> PersistentJob:
+        self.progress(job_id, "completed", payload)
         with self.database.session() as session:
             record = session.get(BackgroundJobRecord, str(job_id))
             if not record:
                 raise KeyError(job_id)
             record.status, record.updated_at = "succeeded", utcnow()
-            record.error_code = None
-            record.error_message_safe = None
             session.flush()
             return self._view(session, record)
 

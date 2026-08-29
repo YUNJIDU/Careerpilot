@@ -5,18 +5,12 @@ import re
 import zipfile
 from pathlib import PurePosixPath
 
-MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 MAX_RESUME_BYTES = 5 * 1024 * 1024
-
-ALLOWED_TYPES = {
+TYPES = {
     ".pdf": "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".txt": "text/plain",
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
 }
-RESUME_EXTENSIONS = {".pdf", ".docx", ".txt"}
 
 
 def clean_filename(value: str) -> str:
@@ -28,48 +22,20 @@ def clean_filename(value: str) -> str:
     return name
 
 
-def classify_file(
-    filename: str,
-    content_type: str,
-    *,
-    resume_only: bool = False,
-) -> tuple[bool, str | None]:
-    try:
-        name = clean_filename(filename)
-    except ValueError:
-        return False, "unsafe filename"
-    extension = PurePosixPath(name).suffix.casefold()
-    allowed = RESUME_EXTENSIONS if resume_only else set(ALLOWED_TYPES)
-    if extension not in allowed:
-        return False, "file type is not allowed"
-    normalized_type = content_type.split(";", 1)[0].strip().casefold()
-    if normalized_type != ALLOWED_TYPES[extension]:
-        return False, "file extension and content type do not match"
-    return True, None
-
-
-def validate_file_content(
-    content: bytes,
-    filename: str,
-    content_type: str,
-    *,
-    resume_only: bool = False,
-    maximum: int = MAX_ATTACHMENT_BYTES,
-) -> None:
-    allowed, reason = classify_file(filename, content_type, resume_only=resume_only)
-    if not allowed:
-        raise ValueError(reason or "unsupported file")
+def validate_resume(content: bytes, filename: str, content_type: str) -> str:
+    filename = clean_filename(filename)
+    extension = PurePosixPath(filename).suffix.casefold()
+    if (
+        extension not in TYPES
+        or content_type.split(";", 1)[0].strip().casefold() != TYPES[extension]
+    ):
+        raise ValueError("file extension and content type do not match")
     if not content:
         raise ValueError("file is empty")
-    if len(content) > maximum:
-        raise ValueError("file exceeds size limit")
-    extension = PurePosixPath(filename).suffix.casefold()
+    if len(content) > MAX_RESUME_BYTES:
+        raise ValueError("resume exceeds 5 MiB")
     if extension == ".pdf" and not content.startswith(b"%PDF-"):
         raise ValueError("invalid PDF signature")
-    if extension == ".png" and not content.startswith(b"\x89PNG\r\n\x1a\n"):
-        raise ValueError("invalid PNG signature")
-    if extension in {".jpg", ".jpeg"} and not content.startswith(b"\xff\xd8\xff"):
-        raise ValueError("invalid JPEG signature")
     if extension == ".txt":
         if b"\x00" in content:
             raise ValueError("text file contains binary data")
@@ -79,6 +45,7 @@ def validate_file_content(
             raise ValueError("text file must be UTF-8") from exc
     if extension == ".docx":
         _validate_docx(content)
+    return filename
 
 
 def _validate_docx(content: bytes) -> None:
@@ -91,12 +58,12 @@ def _validate_docx(content: bytes) -> None:
             if len(entries) > 1000 or sum(entry.file_size for entry in entries) > 50 * 1024 * 1024:
                 raise ValueError("DOCX expands beyond safe limits")
             for entry in entries:
-                normalized = entry.filename.replace("\\", "/")
+                name = entry.filename.replace("\\", "/")
                 if (
-                    normalized.startswith("/")
-                    or re.match(r"^[A-Za-z]:", normalized)
-                    or ".." in PurePosixPath(normalized).parts
-                    or normalized.casefold().endswith("vbaproject.bin")
+                    name.startswith("/")
+                    or re.match(r"^[A-Za-z]:", name)
+                    or ".." in PurePosixPath(name).parts
+                    or name.casefold().endswith("vbaproject.bin")
                 ):
                     raise ValueError("unsafe DOCX content")
     except zipfile.BadZipFile as exc:

@@ -2,9 +2,7 @@ import re
 from pathlib import Path
 
 FORMULA_PREFIXES = ("=", "+", "-", "@")
-_SECRETS = re.compile(
-    r"(?i)(api[_-]?key|authorization|password|token)\s*[:=]\s*([^\s,;]+)"
-)
+_SECRETS = re.compile(r"(?i)(api[_-]?key|authorization|password|token)\s*[:=]\s*([^\s,;]+)")
 _EMAIL = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
 
 
@@ -27,4 +25,3 @@ def redact(value: str) -> str:
 
 def mark_untrusted(value: str) -> dict[str, str | bool]:
     return {"content": value, "trusted": False}
-
