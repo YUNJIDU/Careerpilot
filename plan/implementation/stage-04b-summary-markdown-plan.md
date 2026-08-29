@@ -11,6 +11,11 @@ Deliver the manual information loop:
 
 Stage 4C Docker work remains out of scope.
 
+The completed base loop is extended before Stage 5 with an assessment-
+intelligence preview. It collects likely or frequently reported assessment
+topics for the same role, but does not yet provide tutoring, mock interviews,
+automatic scoring, or training plans.
+
 ## Constraints
 
 - Use the Python standard library for HTTP and HTML extraction.
@@ -46,7 +51,8 @@ latest successful version after later failures.
 
 Implement:
 
-- two approved queries;
+- bounded approved queries for company/role facts, hiring process, written-test
+  and interview signals, and common same-role assessment topics;
 - stable URL deduplication and combined Top 5;
 - Brave credential sent only in the Brave request header;
 - HTTP(S)-only public target validation;
@@ -65,7 +71,19 @@ Search/fetch clients remain injectable so tests never require the network.
 
 Post to `<base_url>/chat/completions` using the configured model. Request one
 JSON object containing overview, JD highlights, process clues, written-test and
-interview information, known facts, unknowns, and cited sources.
+interview information, assessment intelligence, known facts, unknowns, and
+cited sources.
+
+Each assessment item contains a topic, likely format, preparation hint,
+evidence label, citations, and uncertainty. Labels are fixed as:
+
+- `明确考察`: the employer or role description explicitly states it;
+- `多来源高频`: at least two independent public sources report it;
+- `岗位常见`: common for the role but not confirmed for this employer;
+- `可能涉及`: a bounded inference that must be presented as uncertain.
+
+Public interview reports may be summarized as evidence. Do not copy long
+passages, access login/paywall content, or collect leaked/private questions.
 
 Validate:
 
@@ -130,6 +148,8 @@ Application Detail gains:
 - retry through the Jobs page;
 - Markdown view/download link;
 - sources and fetch times.
+- an assessment-intelligence section with labels, preparation hints, and
+  uncertainty.
 
 No background generation, automatic polling service, or source-selection UI is
 added. The page performs bounded polling only while its newly created Job is

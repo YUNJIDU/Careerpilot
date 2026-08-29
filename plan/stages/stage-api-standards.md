@@ -38,7 +38,7 @@ Excel Tracker 双向同步
 | 3 | 邮箱与提取 | 163/邮件样本 | 客观信息、时间线和 Tracker 更新 | 首发 |
 | 4 | 本地 Web 与 Summary | Application、JD、当前阶段 | Web、岗位 Markdown、公开资料 Summary | 首发 |
 | 5 | 求职智能模块 | 稳定业务数据 | 个性化辅助模块 | 后续 |
-| 6 | Orchestrator Multi-Agent | 稳定工具模块 | Agent 协作、调度和评测 | 后续 |
+| 6 | 统一 Career Assistant | 稳定工具模块 | 受控路由、调度和评测 | 后续 |
 | 7 | 外部与自动化扩展 | 稳定首发产品 | 提醒、更多邮箱、验证码、自动填表 | 后续 |
 | 8 | 部署与商业化 | 完整本地产品 | 普通用户产品与运营能力 | 最后 |
 

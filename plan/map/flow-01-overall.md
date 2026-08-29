@@ -14,7 +14,7 @@ flowchart TD
     R["公开资料检索<br/>公司 · JD · 笔试 · 面试"]
     G["ModelGateway<br/>本地模型 / 云模型"]
     A["首发主辅助 Agent<br/>调用稳定工具"]
-    O["后续 Orchestrator Multi-Agent"]
+    O["后续统一 Career Assistant"]
 
     U --> W
     W -->|手动同步| M

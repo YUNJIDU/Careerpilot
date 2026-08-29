@@ -1,79 +1,105 @@
-# Stage 5：求职智能功能扩展
+# Stage 5：求职智能与岗位评估
 
 ## 定位
 
-Stage 5 在首发的信息提取、Tracker 和 Summary 闭环稳定后，将辅助能力扩展为可独立测试的 Python 模块。具体功能进入本 Stage 时再访谈和形成详细设计。
+Stage 5 在已稳定的 Application Core、Excel、163 邮箱、简历管理和手动 Summary 之上，交付四个独立能力组。普通 Service 先稳定，再由 LangGraph 编排需要检查点、模型推理、事实复核和人工确认的步骤。
 
-## 已确认不属于产品方向
+本阶段选择性复用 MIT 许可的 [`santifer/career-ops`](https://github.com/santifer/career-ops) 的 A–G 评估结构、评分规则、Prompt 约束和事实边界，不复制其 Node/CLI 运行时、Markdown Tracker 真源、扫描器、插件或 PDF 管线。复用实质性文本或代码时必须保留许可证与署名。
 
-- 岗位发现。
-- 职位推荐。
-- 招聘网站聚合。
-- 替用户判断是否投递、参加、接受或拒绝。
+## 第一组：智能基础层与 Summary 增强
 
-## 保留的候选扩展
+### 稳定 Service
 
-### JD Intelligence
+- 将 JD 整理为职责、必备项、加分项、技能、经验、学历、地点、工作授权和关键词 Schema。
+- 将当前简历解析为仅包含原文证据的事实 Schema。
+- 建立 JD 要求到简历事实的证据映射，不因关键词相似而创造经历。
+- 保存公开来源 URL、标题、抓取时间和来源等级。
+- 验证岗位链接有效性、模型结构化输出和引用完整性。
+- Application Core 仍是唯一业务写入口；Agent 不直接操作 ORM 或文件路径。
 
-- 职责、技能、经验和学历整理。
-- 必备项、加分项和关键词。
-- 岗位 Summary。
+### Stage 4B+ Summary：岗位考核情报
 
-### Company Research
+现有公司与岗位 Summary 增加：JD 明确考点、公司和岗位的公开招聘流程、同岗位常见笔试/面试主题、基于 JD 的可能考点、准备优先级，以及信息缺口、来源冲突和过期信息。
 
-- 官方业务、产品和技术方向。
-- 公开招聘流程。
-- 来源、时间和可信度。
+每个考点必须使用以下标签之一：
 
-### Resume Match
+1. `明确考察`：JD 或公司官方来源直接说明。
+2. `多来源高频`：至少两个独立公开来源重复提到。
+3. `岗位常见`：同类岗位普遍涉及，但没有公司专属证据。
+4. `可能涉及`：根据 JD 作出的有限推断。
 
-- JD 与简历证据映射。
-- 技能缺口。
-- 应突出项目。
-- 禁止编造经历。
+“高频”没有两个独立来源时必须降级。公开面经只做摘要，不复制泄露题目，不登录账号，不绕过反爬或付费墙。
 
-### OA / Interview 辅助
+结构化结果至少包含：
 
-首发只整理公开信息。后续可以讨论：
+```json
+{
+  "explicit_topics": [],
+  "company_process": [],
+  "common_role_topics": [],
+  "inferred_topics": [],
+  "priority_topics": [],
+  "unknowns": [],
+  "sources": []
+}
+```
 
-- 练习主题。
-- 模拟题。
-- 模拟面试。
-- 评分和训练计划。
+该结果先用于 Summary 展示，后续供面试准备 Agent 消费。本组不生成课程、答案、模拟面试或录用预测。
 
-### Review 与复盘
+## 第二组：A–G 岗位评估 LangGraph
 
-- 来源和事实检查。
-- 用户主动记录的练习结果。
-- 求职过程复盘。
+```text
+读取岗位和当前简历
+  → 结构化 JD
+  → 简历证据映射
+  → 有界公司/市场研究
+  → 生成 A–G 评估
+  → 事实、引用和评分复核
+  → 人工确认
+  → 保存版本化报告
+```
 
-## 共同边界
+第一版使用固定 LangGraph，不让模型自由决定整个执行路径。节点只保存 JSON 可序列化状态；外部调用、随机模型输出和副作用封装在可重试任务中。Graph 使用持久化检查点、`thread_id` 和 `interrupt()` 支持失败恢复与人工确认。
 
-- 所有能力仍是辅助，不替用户决策。
-- 输入输出使用明确 Schema。
-- 本地/外部模型可切换。
-- 外部事实保存来源和抓取时间。
-- 不登录第三方内容账号，不绕过反爬和付费墙。
-- 具体功能、API、评测和 UI 在进入本 Stage 时再确定。
+完整输出为：A 岗位概述；B 简历匹配证据和缺口；C 级别与申请策略；D 薪资、市场与公司信息；E 简历优化计划；F 笔试面试准备方向；G 岗位真实性和风险。G 单独展示，不计入总分。
 
-## 开源与 Hugging Face 参考
+保留 `career-ops` 的五维综合判断、全局 `1–5` 分和建议：
 
-### 笔试与面试训练
+- `4.5+`：强匹配，建议优先投递；
+- `4.0–4.4`：匹配良好，值得投递；
+- `3.5–3.9`：存在明显取舍，谨慎考虑；
+- `<3.5`：投入产出较低，不建议优先投入。
 
-- [pipecat-ai/pipecat](https://github.com/pipecat-ai/pipecat)：实时语音和多模态对话管线，可作为后续语音模拟面试的框架参考。
-- [ocbyram/Interview_Prep_Help](https://huggingface.co/ocbyram/Interview_Prep_Help)：基于 JD 和用户资料生成面试问题/示例答案的模型参考；其训练数据含合成内容，只能作为实验基线，不能视为真实面试事实。
-- [anuj6316/Interview_Questions](https://huggingface.co/datasets/anuj6316/Interview_Questions)：带领域、级别和题型元数据的合成面试问题数据集，可用于问题生成与评测原型。
-- [Suchi-30/job-aptitude](https://huggingface.co/datasets/Suchi-30/job-aptitude)：岗位技能到选择题的 aptitude 数据集，可用于笔试题生成 Schema 和离线评测参考。
-- [AI4A-lab/RecruitView](https://huggingface.co/datasets/AI4A-lab/RecruitView)：多模态面试回答数据与心理学标注研究参考；涉及视频、声音和行为数据，必须单独审查同意、偏见、身份泄漏和适用许可。
+评分必须同时展示证据、风险、缺口和不确定性。它不是录用概率，系统不替用户投递、接受或拒绝岗位，用户可以忽略建议。
 
-### 简历与 JD 证据映射
+研究查询、页面、模型调用、token、时间和重试均有硬上限。JD、网页和模型输出全部视为不可信输入。只有人工触发才运行评估；评分不会自动触发下一组。
 
-- [interviewstreet/hiring-agent](https://github.com/interviewstreet/hiring-agent)：简历 PDF 到结构化 Markdown/JSON、证据化输出和本地/托管模型切换参考；CareerPilot 不采用其招聘方候选人评分目标。
-- [netsol/resume-score-details](https://huggingface.co/datasets/netsol/resume-score-details)：简历—JD 匹配字段和评价维度参考；数据由模型生成，不能作为无偏真实标签。
-- [med2425/resume-job-fit-merged-v1](https://huggingface.co/datasets/med2425/resume-job-fit-merged-v1)：大规模简历—JD 匹配实验数据参考；进入本 Stage 时必须复核其数据来源、合成比例和许可链。
+## 第三组：简历优化建议 Agent
 
-### 明确排除
+输入为 JD、当前简历事实、A–G 报告和用户约束。输出包括应突出、弱化、补充或重排的内容，每项建议对应的 JD 要求、简历原文证据和理由，可复制的替换文本，以及无证据内容和禁止表述。
 
-- 不采用实时隐身答题、规避录屏、规避监考或面试中秘密生成答案的开源项目。
-- 模拟训练必须明确标识为练习环境，并由用户主动开始和结束。
-- 评分只能基于透明量表，不得声称预测招聘结果或人格真实性。
+明确禁止修改或覆盖原简历、生成 PDF/DOCX、创建简历版本、改变岗位当前简历关联，或编造项目、指标、技能和经历。用户自行修改文件，完成后再作为新版本上传。
+
+## 第四组：面试准备 Agent
+
+输入为岗位、Summary 考核情报、A–G 报告、当前简历事实及用户主动维护的故事库。后续交付岗位复习主题、招聘流程和受众映射、JD 到 STAR+R 故事映射、问题清单、文字模拟面试、透明量表反馈和训练记录。
+
+模拟训练必须由用户主动开始和结束。不得秘密辅助真实在线笔试/面试，不得声称预测招聘结果、人格或诚信。
+
+## 共用安全与评测
+
+- 所有模型输出使用明确 Pydantic/JSON Schema。
+- 外部事实保留来源、抓取时间和置信度。
+- 事实检查优先使用确定性校验；Reviewer 是 Graph 节点，不先拆成独立 Agent。
+- 使用固定 JD/简历/来源夹具测试评分一致性、引用完整性、Prompt Injection、恢复、预算和人工确认。
+- 本地/外部 OpenAI-compatible 模型可切换，模型差异必须进入离线评测。
+
+## 完成顺序
+
+1. Summary 考核情报和基础 Schema。
+2. JD/简历证据映射 Service。
+3. A–G 固定 LangGraph 和报告 UI。
+4. 简历优化建议 Agent。
+5. 面试准备 Agent。
+
+每组独立设计、计划、实现和验收；前一组不稳定时不进入下一组。

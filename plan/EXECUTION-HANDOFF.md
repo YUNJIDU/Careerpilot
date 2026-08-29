@@ -1,6 +1,6 @@
 # CareerPilot 新对话执行交接
 
-更新时间：2026-07-28
+更新时间：2026-08-29
 
 ## 任务目标
 
@@ -28,12 +28,12 @@ CareerPilot 是辅助求职 Agent，不替用户查看邮件、作求职决定�
 - Persistence：SQLAlchemy、SQLite、Alembic。
 - Excel：openpyxl。
 - 首要运行与验收环境：Windows。
-- 第二运行环境：Docker。
+- Docker、安装包和自动更新在核心功能完善后进入 Stage 8。
 - 单用户，可管理多份简历和多个邮箱账户。
 - 运行数据统一位于 `data/`。
 - Apache-2.0 Open Core。
-- 首发使用单一主辅助 Agent；后续 Multi-Agent 使用 Orchestrator。
-- Windows 凭证使用 Credential Manager；Docker 使用环境变量或 secret 文件。
+- Stage 6 使用单一 Career Assistant；只有出现可测量瓶颈才评估 Multi-Agent。
+- Windows 凭证使用 Credential Manager。
 - API 从 `/api/v1` 开始，项目采用语义化版本。
 
 ## 执行顺序
@@ -42,7 +42,12 @@ CareerPilot 是辅助求职 Agent，不替用户查看邮件、作求职决定�
 2. Stage 1：Excel Schema、解析、写出与差异计算。
 3. Stage 2：Application Core、SQLite、Alembic 和实际双向写入。
 4. Stage 3：MailAdapter、163、客观信息提取、附件和断点。
-5. Stage 4：本地 Web、岗位 Markdown、手动 Summary 和 Docker。
+5. Stage 4：本地 Web、岗位 Markdown、手动 Summary 和 Windows 验收。
+6. Stage 4B+：Summary 考点情报。
+7. Stage 5：A–G 评估、简历建议和面试准备。
+8. Stage 6：统一 Career Assistant。
+9. Stage 7：外部辅助。
+10. Stage 8：部署与产品化。
 
 不得跳过 Stage Gate。每个 Stage 的 Entry、任务、测试、Exit Gate 和 Demo 见详细计划。
 
@@ -70,7 +75,7 @@ CareerPilot 是辅助求职 Agent，不替用户查看邮件、作求职决定�
   邮件/Excel 同步、Jobs 和脱敏设置页。
 - Stage 4B 已提供岗位 Markdown、Brave Top 5 搜索、兼容 OpenAI 接口的
   手动 Summary、不可变版本和可恢复 Job。
-- 下一步执行 Stage 4C Docker 首发验收。
+- 下一步执行 Stage 4B+ Summary 考点情报，再按 Stage 5 四组顺序推进。
 - 运行数据继续保留在 `data/`，不得提交真实邮件、数据库、Tracker 或凭证。
 
 ## 不可违反的边界
