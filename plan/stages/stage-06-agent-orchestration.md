@@ -53,6 +53,33 @@ Assistant 不执行任意 Shell、SQL、Python、浏览器脚本或文件路径�
 
 只有单 Assistant 出现可测量的上下文、成本、并发或专业评测瓶颈时，才评估拆分独立 Agent。
 
+## Multi-Agent 演进路线
+
+以下专用 Agent 都属于允许建设的正式方向，不是被排除的功能：
+
+- `Research Agent`：公司、岗位、市场、招聘流程和考点研究；
+- `Evaluation Agent`：A–G 分析、证据映射、1–5 分评分和建议；
+- `Resume Agent`：简历修改建议和可复制文本，不修改简历文件；
+- `Interview Agent`：准备主题、故事映射、文字模拟和透明反馈；
+- `Reviewer Agent`：事实、引用、证据等级、安全和输出一致性复核；
+- `Career Assistant`：顶层 Orchestrator，负责路由、权限、预算、恢复、人工确认和结果汇总。
+
+Stage 5 的 Service、Schema 和 LangGraph 子图必须保持可独立运行，使它们以后可以直接成为专用 Agent 的工具或子图，无需重写业务核心。升级可以逐个发生，不要求一次拆出全部 Agent。
+
+## 接手开发决策门槛
+
+本计划描述技术路线和候选能力，不是看到条目后立即编码的任务清单。接手者在新增或拆分 Agent 前必须先记录：
+
+1. 真实用户需求和具体使用场景；
+2. 当前 Service、LangGraph 子图或单 Assistant 为什么不能满足；
+3. 独立 Agent 能带来的可验证收益；
+4. 输入、输出、数据权限、人工确认点和失败边界；
+5. 能证明功能可用的端到端验收场景。
+
+没有上述证据时继续使用单 Orchestrator 调用模块。禁止只完成页面、接口、Agent 名称或演示流程，却没有可用的核心业务闭环。
+
+[`santifer/career-ops`](https://github.com/santifer/career-ops) 可作为 A–G 分析、评分规则、Prompt 约束和事实边界参考。CareerPilot 选择性复用这些业务思路，不机械复制其 CLI、Markdown 数据源、Node 运行时或完整工程结构；复用实质性内容时保留 MIT 许可证和署名。
+
 ## 完成门槛
 
 - 固定任务集覆盖正确/错误路由、未知请求、预算耗尽、取消、恢复和审批。
