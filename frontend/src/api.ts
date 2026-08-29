@@ -146,9 +146,9 @@ export const api = {
       body: JSON.stringify({ ...body, idempotency_key: crypto.randomUUID() }),
     }),
   syncExcel: (path: string, direction: "import" | "export") =>
-    request<{ job_id: string }>("/excel-sync-jobs", {
+    request<{ job_id: string; created?: number; updated?: number; deleted?: number; resume_mapped?: number }>("/excel-sync-jobs", {
       method: "POST",
-      body: JSON.stringify({ path, direction, idempotency_key: crypto.randomUUID() }),
+      body: JSON.stringify({ path, direction, destructive_confirmed: direction === "import", idempotency_key: crypto.randomUUID() }),
     }),
   resumes: () => request<ResumeVersion[]>("/resumes"),
   uploadResume: (file: File, label: string, resumeId?: string) =>

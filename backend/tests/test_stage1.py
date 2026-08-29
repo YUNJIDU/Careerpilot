@@ -24,7 +24,7 @@ def sample_row(**values: object) -> TrackerRow:
 
 def test_tracker_round_trip_and_formula_escape(tmp_path: Path) -> None:
     path = tmp_path / "tracker.xlsx"
-    original = sample_row(备注="=HYPERLINK(\"bad\")")
+    original = sample_row(备注='=HYPERLINK("bad")')
     write_tracker(path, [original])
     [loaded] = read_tracker(path)
     assert loaded.application_id == original.application_id
@@ -119,7 +119,9 @@ def test_atomic_write_preserves_existing_file_on_validation_failure(
 ) -> None:
     path = tmp_path / "tracker.xlsx"
     path.write_bytes(b"original")
-    monkeypatch.setattr("careerpilot.excel.read_tracker", lambda _: (_ for _ in ()).throw(ValueError()))
+    monkeypatch.setattr(
+        "careerpilot.excel.read_tracker", lambda _: (_ for _ in ()).throw(ValueError())
+    )
     with pytest.raises(ValueError):
         write_tracker(path, [sample_row()])
     assert path.read_bytes() == b"original"

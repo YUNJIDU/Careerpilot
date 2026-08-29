@@ -87,7 +87,9 @@ def test_application_create_update_detail_and_conflict(tmp_path: Path) -> None:
         },
     )
     assert invalid_change.status_code == 422
-    assert client.get(f"/api/v1/applications/{application_id}").json()["values"]["备注"] == "人工备注"
+    assert (
+        client.get(f"/api/v1/applications/{application_id}").json()["values"]["备注"] == "人工备注"
+    )
 
     EmailService(Database(tmp_path / "careerpilot.db")).record(
         account_id="personal",
@@ -107,17 +109,23 @@ def test_application_create_update_detail_and_conflict(tmp_path: Path) -> None:
     assert detail["emails"][0]["subject"] == "面试邀请"
     assert detail["values"]["备注"] == "人工备注"
 
-    assert client.get(
-        "/api/v1/applications/00000000-0000-0000-0000-000000000000"
-    ).status_code == 404
-    assert client.post(
-        "/api/v1/applications",
-        json={"company": "", "role": "Engineer", "idempotency_key": "invalid"},
-    ).status_code == 422
-    assert client.post(
-        "/api/v1/applications",
-        json={"company": "   ", "role": "Engineer", "idempotency_key": "spaces"},
-    ).status_code == 422
+    assert (
+        client.get("/api/v1/applications/00000000-0000-0000-0000-000000000000").status_code == 404
+    )
+    assert (
+        client.post(
+            "/api/v1/applications",
+            json={"company": "", "role": "Engineer", "idempotency_key": "invalid"},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/v1/applications",
+            json={"company": "   ", "role": "Engineer", "idempotency_key": "spaces"},
+        ).status_code
+        == 422
+    )
 
     service = ApplicationService(Database(tmp_path / "careerpilot.db"))
     service.apply_field_change(
@@ -157,10 +165,13 @@ def test_settings_are_atomic_scoped_and_never_echo_secrets(tmp_path: Path) -> No
 
     restarted = TestClient(create_app(data_dir=tmp_path, secret_store=secrets))
     assert restarted.get("/api/v1/settings").json()["model_name"] == "local-model"
-    assert restarted.put(
-        "/api/v1/settings",
-        json={**payload, "tracker_path": "../outside.xlsx"},
-    ).status_code == 422
+    assert (
+        restarted.put(
+            "/api/v1/settings",
+            json={**payload, "tracker_path": "../outside.xlsx"},
+        ).status_code
+        == 422
+    )
 
 
 def test_jobs_list_excel_completion_and_validation(tmp_path: Path) -> None:
@@ -241,9 +252,10 @@ def test_terminal_result_is_consistent_for_web_excel_and_mail(tmp_path: Path) ->
     assert excel_application.values["笔试"] == "未通过"
     assert excel_application.values["当前阶段"] == "已结束（笔试未通过）"
 
-    assert extract_facts(
-        "Closed Co 笔试结果\n很遗憾地通知您，您未能通过本次笔试。"
-    )["当前阶段"] == "已结束（笔试未通过）"
+    assert (
+        extract_facts("Closed Co 笔试结果\n很遗憾地通知您，您未能通过本次笔试。")["当前阶段"]
+        == "已结束（笔试未通过）"
+    )
 
 
 def test_resume_rejection_wording_is_recognized() -> None:

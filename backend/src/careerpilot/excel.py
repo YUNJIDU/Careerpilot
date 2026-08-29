@@ -35,6 +35,7 @@ COLUMNS = (
     "最近更新时间",
     "备注",
 )
+RESUME_COLUMN = "当前简历"
 _ID_COLUMN = "_application_id"
 _VERSION_COLUMN = "_row_version"
 _MAX_CELL_LENGTH = 5000
@@ -62,6 +63,7 @@ class TrackerRow(BaseModel):
     row_version: int = Field(default=1, ge=1)
     values: dict[str, str | date | datetime | None]
     generated_id: bool = False
+    resume_column_present: bool = False
 
 
 class ChangeKind(StrEnum):
@@ -97,7 +99,7 @@ def write_tracker(path: Path, rows: Iterable[TrackerRow], root: Path | None = No
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = SHEET_NAME
-    headers = (*COLUMNS, _ID_COLUMN, _VERSION_COLUMN)
+    headers = (*COLUMNS, _ID_COLUMN, _VERSION_COLUMN, RESUME_COLUMN)
     sheet.append(headers)
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = f"A1:{get_column_letter(len(COLUMNS))}1"
@@ -107,6 +109,7 @@ def write_tracker(path: Path, rows: Iterable[TrackerRow], root: Path | None = No
         sheet.column_dimensions[get_column_letter(index)].width = max(12, min(30, len(name) + 6))
     sheet.column_dimensions[get_column_letter(len(COLUMNS) + 1)].hidden = True
     sheet.column_dimensions[get_column_letter(len(COLUMNS) + 2)].hidden = True
+    sheet.column_dimensions[get_column_letter(len(COLUMNS) + 3)].width = 24
 
     for row in rows:
         cells: list[Any] = []
@@ -115,7 +118,9 @@ def write_tracker(path: Path, rows: Iterable[TrackerRow], root: Path | None = No
             if isinstance(value, str):
                 value = escape_excel_formula(value)
             cells.append(value)
-        sheet.append((*cells, str(row.application_id), row.row_version))
+        sheet.append(
+            (*cells, str(row.application_id), row.row_version, row.values.get(RESUME_COLUMN))
+        )
     for column in ("A", "M", "O"):
         for cell in sheet[column][1:]:
             cell.number_format = "yyyy-mm-dd"
@@ -156,7 +161,9 @@ def read_tracker(path: Path, root: Path | None = None) -> list[TrackerRow]:
     expected = [*COLUMNS, _ID_COLUMN, _VERSION_COLUMN]
     duplicates = {name for name in headers if name is not None and headers.count(name) > 1}
     if duplicates:
-        raise ExcelError("excel.duplicate_column", f"duplicate columns: {sorted(duplicates)}", sheet=SHEET_NAME)
+        raise ExcelError(
+            "excel.duplicate_column", f"duplicate columns: {sorted(duplicates)}", sheet=SHEET_NAME
+        )
     missing = [name for name in expected if name not in headers]
     if missing:
         raise ExcelError("excel.missing_column", f"missing columns: {missing}", sheet=SHEET_NAME)
@@ -165,7 +172,11 @@ def read_tracker(path: Path, root: Path | None = None) -> list[TrackerRow]:
     result: list[TrackerRow] = []
     seen: set[UUID] = set()
     for row_index in range(2, sheet.max_row + 1):
-        if all(sheet.cell(row_index, positions[name]).value is None for name in COLUMNS):
+        resume_column_present = RESUME_COLUMN in headers
+        visible_columns = (*COLUMNS, RESUME_COLUMN) if resume_column_present else COLUMNS
+        if all(
+            sheet.cell(row_index, headers.index(name) + 1).value is None for name in visible_columns
+        ):
             continue
         raw_id = sheet.cell(row_index, positions[_ID_COLUMN]).value
         generated_id = raw_id in (None, "")
@@ -225,6 +236,17 @@ def read_tracker(path: Path, root: Path | None = None) -> list[TrackerRow]:
             if name in {"投递时间", "截止时间"} and isinstance(value, datetime):
                 value = value.date()
             values[name] = value
+        if resume_column_present:
+            resume_value = sheet.cell(row_index, headers.index(RESUME_COLUMN) + 1).value
+            if resume_value is not None and not isinstance(resume_value, str):
+                raise ExcelError(
+                    "excel.invalid_resume",
+                    "current resume must be text",
+                    sheet=SHEET_NAME,
+                    row=row_index,
+                    column=RESUME_COLUMN,
+                )
+            values[RESUME_COLUMN] = resume_value.strip() if resume_value else None
         try:
             result.append(
                 TrackerRow(
@@ -232,6 +254,7 @@ def read_tracker(path: Path, root: Path | None = None) -> list[TrackerRow]:
                     row_version=sheet.cell(row_index, positions[_VERSION_COLUMN]).value or 1,
                     values=values,
                     generated_id=generated_id,
+                    resume_column_present=resume_column_present,
                 )
             )
         except ValidationError as exc:

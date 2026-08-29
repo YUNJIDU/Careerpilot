@@ -110,9 +110,7 @@ def _require_public_url(url: str) -> None:
     parsed = urlsplit(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("source URL must use public HTTP(S)")
-    addresses = {
-        item[4][0] for item in socket.getaddrinfo(parsed.hostname, parsed.port or 443)
-    }
+    addresses = {item[4][0] for item in socket.getaddrinfo(parsed.hostname, parsed.port or 443)}
     if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
         raise ValueError("source URL is not public")
 
@@ -278,9 +276,7 @@ class SummaryService:
                 sources = []
                 for item in state["search_results"]:
                     try:
-                        sources.append(
-                            self.page_fetcher.fetch(SearchResult(**item))
-                        )
+                        sources.append(self.page_fetcher.fetch(SearchResult(**item)))
                     except (OSError, UnicodeError, ValueError):
                         sources.append(
                             {
@@ -320,9 +316,7 @@ class SummaryService:
                     if source.get("text")
                 ]
                 try:
-                    summary = SummaryContent.model_validate(
-                        {**raw, "sources": metadata}
-                    )
+                    summary = SummaryContent.model_validate({**raw, "sources": metadata})
                 except ValidationError as exc:
                     raise ModelGenerationError("model_schema") from exc
                 state["summary"] = summary.model_dump(mode="json")
@@ -334,9 +328,7 @@ class SummaryService:
                 self.jobs.progress(job.job_id, "render", state)
             return self.jobs.complete(job.job_id, state), version
         except Exception as exc:
-            category = (
-                exc.category if isinstance(exc, ModelGenerationError) else "failed"
-            )
+            category = exc.category if isinstance(exc, ModelGenerationError) else "failed"
             self.jobs.fail(
                 job.job_id,
                 f"summary.{category}",
@@ -360,17 +352,11 @@ class SummaryService:
                     return merged
         return merged
 
-    def _stored_version(
-        self, application_id: UUID, state: dict[str, Any]
-    ) -> SummaryVersion:
+    def _stored_version(self, application_id: UUID, state: dict[str, Any]) -> SummaryVersion:
         if state.get("summary_version"):
             version = int(state["summary_version"])
             existing = next(
-                (
-                    item
-                    for item in self.summaries.list(application_id)
-                    if item.version == version
-                ),
+                (item for item in self.summaries.list(application_id) if item.version == version),
                 None,
             )
             if existing:

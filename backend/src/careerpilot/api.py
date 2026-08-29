@@ -43,6 +43,7 @@ class ExcelSyncRequest(BaseModel):
     path: str = "data/tracker.xlsx"
     direction: Literal["import", "export"] = "import"
     idempotency_key: str
+    destructive_confirmed: bool = False
 
 
 class MailAccountRequest(BaseModel):
@@ -310,18 +311,27 @@ def create_app(
 
     @app.post("/api/v1/excel-sync-jobs")
     def excel_sync(request: ExcelSyncRequest) -> dict[str, object]:
+        if request.direction == "import" and not request.destructive_confirmed:
+            raise HTTPException(
+                status_code=400,
+                detail="Excel import can permanently delete missing applications; confirmation is required",
+            )
         job = jobs.create("excel_sync", request.idempotency_key)
         try:
             path = safe_path(data_dir, Path(request.path))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if request.direction == "import":
-            count = excel.import_workbook(path, request.idempotency_key)
-            jobs.complete(job.job_id, {"rows": count})
+            try:
+                result = excel.import_workbook(path, request.idempotency_key)
+            except ValueError as exc:
+                jobs.fail(job.job_id, "excel.import_invalid", str(exc))
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            jobs.complete(job.job_id, result)
         elif request.direction == "export":
             excel.export_workbook(path)
             jobs.complete(job.job_id, {"path": str(path)})
-        return {"job_id": str(job.job_id)}
+        return {"job_id": str(job.job_id), **(result if request.direction == "import" else {})}
 
     @app.get("/api/v1/jobs")
     def list_jobs() -> list[dict[str, object]]:

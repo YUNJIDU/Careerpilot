@@ -113,9 +113,7 @@ class FakeResponse:
         return None
 
     def read(self, limit: int) -> bytes:
-        return json.dumps(
-            {"choices": [{"message": {"content": self.content}}]}
-        ).encode()
+        return json.dumps({"choices": [{"message": {"content": self.content}}]}).encode()
 
 
 @pytest.mark.parametrize(
@@ -146,9 +144,7 @@ def test_model_request_has_exact_contract_and_provider_option(
     assert '"jd_highlights": ["string"]' in prompt
     assert "2026-07-28 00:00:00+00:00" in prompt
     assert ("thinking" in captured) is has_thinking
-    assert captured.get("thinking") == (
-        {"type": "disabled"} if has_thinking else None
-    )
+    assert captured.get("thinking") == ({"type": "disabled"} if has_thinking else None)
 
 
 @pytest.mark.parametrize("url", ["file:///etc/passwd", "http://127.0.0.1/private"])
@@ -204,10 +200,13 @@ def test_summary_api_top_five_versions_markdown_and_secret_safety(
     configure(client)
     application_id = create_application(client)
     endpoint = f"/api/v1/applications/{application_id}/summary-jobs"
-    assert client.post(
-        endpoint,
-        json={"idempotency_key": "not-confirmed", "data_leaving_confirmed": False},
-    ).status_code == 422
+    assert (
+        client.post(
+            endpoint,
+            json={"idempotency_key": "not-confirmed", "data_leaving_confirmed": False},
+        ).status_code
+        == 422
+    )
 
     response = client.post(
         endpoint,
@@ -218,14 +217,10 @@ def test_summary_api_top_five_versions_markdown_and_secret_safety(
     assert search.calls == 2
     assert fetcher.calls == 5
     assert len(model.payload["public_sources"]) == 4
-    summaries = client.get(
-        f"/api/v1/applications/{application_id}/summaries"
-    ).json()
+    summaries = client.get(f"/api/v1/applications/{application_id}/summaries").json()
     assert len(summaries) == 1
     assert len(summaries[0]["content"]["sources"]) == 4
-    assert summaries[0]["content"]["sources"][0]["fetched_at"].endswith(
-        ("Z", "+00:00")
-    )
+    assert summaries[0]["content"]["sources"][0]["fetched_at"].endswith(("Z", "+00:00"))
 
     repeated = client.post(
         endpoint,
@@ -240,10 +235,9 @@ def test_summary_api_top_five_versions_markdown_and_secret_safety(
     assert "&lt;script&gt;" in markdown.text
     assert "https://source.example/0" in markdown.text
 
-    persisted = (
-        (tmp_path / "careerpilot.db").read_bytes()
-        + (tmp_path / "markdown" / f"{application_id}.md").read_bytes()
-    )
+    persisted = (tmp_path / "careerpilot.db").read_bytes() + (
+        tmp_path / "markdown" / f"{application_id}.md"
+    ).read_bytes()
     assert b"model-secret" not in persisted
     assert b"brave-secret" not in persisted
     job = client.get(f"/api/v1/jobs/{response.json()['job_id']}").json()

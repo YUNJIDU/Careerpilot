@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import sqlite3
 import unicodedata
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -22,10 +23,11 @@ from sqlalchemy import (
     desc,
     or_,
     select,
+    update,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
-from careerpilot.excel import COLUMNS, TrackerRow, read_tracker, write_tracker
+from careerpilot.excel import COLUMNS, RESUME_COLUMN, TrackerRow, read_tracker, write_tracker
 
 PROCESS_FIELDS = (
     "简历通过",
@@ -541,14 +543,80 @@ class ExcelSyncService:
     def __init__(self, database: Database, applications: ApplicationService) -> None:
         self.database, self.applications = database, applications
 
-    def import_workbook(self, path: Path, idempotency_key: str) -> int:
+    def import_workbook(self, path: Path, idempotency_key: str) -> dict[str, int]:
         rows = read_tracker(path)
         with self.database.session() as session:
             existing = session.scalar(
                 select(SyncBatchRecord).where(SyncBatchRecord.idempotency_key == idempotency_key)
             )
             if existing:
-                return 0
+                return {"created": 0, "updated": 0, "deleted": 0, "resume_mapped": 0}
+
+        current = self.applications.list()
+        by_id = {item.application_id: item for item in current}
+        by_identity = {
+            (normalize_identity(item.company), normalize_identity(item.role)): item
+            for item in current
+        }
+        prepared: list[tuple[TrackerRow, UUID]] = []
+        for row in rows:
+            company = str(row.values.get("公司名称") or "").strip()
+            role = str(row.values.get("岗位") or "").strip()
+            if not company or not role:
+                raise ValueError("company and role are required for every Excel row")
+            target_id = row.application_id
+            if target_id not in by_id:
+                match = by_identity.get((normalize_identity(company), normalize_identity(role)))
+                if match:
+                    target_id = match.application_id
+            prepared.append((row, target_id))
+
+        resume_links: dict[UUID, str | None] = {}
+        if rows and rows[0].resume_column_present:
+            with self.database.session() as session:
+                versions = list(session.scalars(select(ResumeVersionRecord)))
+            latest: dict[str, ResumeVersionRecord] = {}
+            for version in versions:
+                if (
+                    version.resume_id not in latest
+                    or version.version > latest[version.resume_id].version
+                ):
+                    latest[version.resume_id] = version
+            labels: dict[str, list[str]] = {}
+            for resume_id, version in latest.items():
+                labels.setdefault(version.label.casefold(), []).append(resume_id)
+            for row, target_id in prepared:
+                reference = str(row.values.get(RESUME_COLUMN) or "").strip()
+                if not reference:
+                    resume_links[target_id] = None
+                    continue
+                match = re.fullmatch(r"(.+?)(?:@v(\d+))?", reference)
+                if not match:
+                    raise ValueError(f"invalid current resume: {reference}")
+                label, requested_version = match.group(1).strip(), match.group(2)
+                resume_ids = labels.get(label.casefold(), [])
+                if len(resume_ids) != 1:
+                    raise ValueError(f"current resume is missing or ambiguous: {reference}")
+                candidates = [item for item in versions if item.resume_id == resume_ids[0]]
+                selected = (
+                    next(
+                        (item for item in candidates if item.version == int(requested_version)),
+                        None,
+                    )
+                    if requested_version
+                    else max(candidates, key=lambda item: item.version)
+                )
+                if not selected:
+                    raise ValueError(f"resume version does not exist: {reference}")
+                resume_links[target_id] = selected.version_id
+
+        backup = self.database.path.with_name("careerpilot.db.pre-excel-import.bak")
+        with sqlite3.connect(self.database.path) as source, sqlite3.connect(backup) as destination:
+            source.backup(destination)
+
+        input_ids = {target_id for _, target_id in prepared}
+        stats = {"created": 0, "updated": 0, "deleted": 0, "resume_mapped": 0}
+        with self.database.session() as session:
             session.add(
                 SyncBatchRecord(
                     batch_id=str(uuid4()),
@@ -557,67 +625,111 @@ class ExcelSyncService:
                     baseline={"rows": len(rows)},
                 )
             )
-        for row in rows:
-            target_id = row.application_id
-            try:
-                current = self.applications.get(target_id)
-            except KeyError:
-                company = str(row.values.get("公司名称") or "")
-                role = str(row.values.get("岗位") or "")
-                current = next(
-                    (
-                        application
-                        for application in self.applications.list()
-                        if normalize_identity(application.company) == normalize_identity(company)
-                        and normalize_identity(application.role) == normalize_identity(role)
-                    ),
-                    None,
-                )
-                if current:
-                    target_id = current.application_id
+            records = {
+                UUID(item.application_id): item
+                for item in session.scalars(select(ApplicationRecord))
+            }
+            for row, target_id in prepared:
+                values = {field: _json_value(row.values.get(field)) for field in COLUMNS}
+                for field in PROCESS_FIELDS:
+                    terminal = terminal_result(field, values.get(field))
+                    if terminal:
+                        values[field] = terminal[1]
+                        values["当前阶段"] = terminal_label(*terminal)
+                company, role = str(values["公司名称"]), str(values["岗位"])
+                record = records.get(target_id)
+                if record is None:
+                    record = ApplicationRecord(
+                        application_id=str(target_id),
+                        create_key=f"excel:create:{target_id}",
+                        company=company,
+                        role=role,
+                        values=values,
+                        user_fields=[
+                            field for field, value in values.items() if value not in (None, "")
+                        ],
+                    )
+                    session.add(record)
+                    records[target_id] = record
+                    stats["created"] += 1
                 else:
-                    current = self.applications.create(
-                        company,
-                        role,
-                        idempotency_key=f"excel:create:{target_id}",
-                        application_id=target_id,
-                        values=row.values,
+                    changed = [
+                        field for field in COLUMNS if record.values.get(field) != values[field]
+                    ]
+                    for field in changed:
+                        session.add(
+                            ProvenanceRecord(
+                                provenance_id=str(uuid4()),
+                                application_id=str(target_id),
+                                field=field,
+                                value=values[field],
+                                source="user",
+                                evidence=None,
+                                idempotency_key=f"{idempotency_key}:{target_id}:{field}",
+                            )
+                        )
+                    if changed:
+                        record.company, record.role, record.values = company, role, values
+                        record.user_fields = [
+                            field for field, value in values.items() if value not in (None, "")
+                        ]
+                        record.version += 1
+                        record.updated_at = utcnow()
+                        stats["updated"] += 1
+                if target_id in resume_links:
+                    session.execute(
+                        delete(ApplicationResumeRecord).where(
+                            ApplicationResumeRecord.application_id == str(target_id)
+                        )
                     )
-            for field, value in row.values.items():
-                if value != current.values.get(field) or (
-                    row.generated_id and value not in (None, "")
-                ):
-                    self.applications.apply_field_change(
-                        target_id,
-                        field,
-                        value,
-                        source="user",
-                        idempotency_key=f"{idempotency_key}:{target_id}:{field}",
-                    )
-            terminal = next(
-                (
-                    terminal_result(field, value)
-                    for field, value in row.values.items()
-                    if terminal_result(field, value)
-                ),
-                None,
-            )
-            if terminal:
-                self.applications.apply_field_change(
-                    target_id,
-                    "当前阶段",
-                    terminal_label(*terminal),
-                    source="user",
-                    idempotency_key=f"{idempotency_key}:{target_id}:terminal",
+                    if resume_links[target_id]:
+                        session.add(
+                            ApplicationResumeRecord(
+                                application_id=str(target_id),
+                                version_id=str(resume_links[target_id]),
+                            )
+                        )
+                    stats["resume_mapped"] += 1
+
+            deleted_ids = [item for item in records if item not in input_ids]
+            if deleted_ids:
+                ids = [str(item) for item in deleted_ids]
+                session.execute(
+                    update(EmailRecord)
+                    .where(EmailRecord.application_id.in_(ids))
+                    .values(application_id=None)
                 )
-        return len(rows)
+                for model in (
+                    ApplicationResumeRecord,
+                    SummaryVersionRecord,
+                    ProvenanceRecord,
+                    ApplicationEventRecord,
+                ):
+                    session.execute(delete(model).where(model.application_id.in_(ids)))
+                session.execute(
+                    delete(ApplicationRecord).where(ApplicationRecord.application_id.in_(ids))
+                )
+                stats["deleted"] = len(ids)
+        return stats
 
     def export_workbook(self, path: Path) -> Path:
+        with self.database.session() as session:
+            links = {
+                link.application_id: session.get(ResumeVersionRecord, link.version_id)
+                for link in session.scalars(select(ApplicationResumeRecord))
+            }
         rows = [
             TrackerRow(
                 application_id=application.application_id,
                 row_version=application.version,
-                values=application.values,
+                values={
+                    **application.values,
+                    RESUME_COLUMN: (
+                        f"{links[str(application.application_id)].label}@v{links[str(application.application_id)].version}"
+                        if str(application.application_id) in links
+                        else None
+                    ),
+                },
             )
             for application in self.applications.list()
         ]

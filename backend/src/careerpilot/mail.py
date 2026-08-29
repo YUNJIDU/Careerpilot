@@ -188,9 +188,7 @@ class Imap163Adapter:
                     (
                         part[1]
                         for part in payload
-                        if isinstance(part, tuple)
-                        and len(part) > 1
-                        and isinstance(part[1], bytes)
+                        if isinstance(part, tuple) and len(part) > 1 and isinstance(part[1], bytes)
                     ),
                     None,
                 )
@@ -366,9 +364,7 @@ class MailSyncService:
         if resume_payload:
             self.jobs.progress(job.job_id, "configured", resume_payload)
         try:
-            return self._sync(
-                adapter, account_id, tracker_path, job, idempotency_key
-            )
+            return self._sync(adapter, account_id, tracker_path, job, idempotency_key)
         except Exception as exc:
             self.jobs.fail(
                 job.job_id,
@@ -386,9 +382,7 @@ class MailSyncService:
         idempotency_key: str,
     ) -> int:
         if tracker_path.exists():
-            self.excel.import_workbook(
-                tracker_path, f"{idempotency_key}:tracker-import"
-            )
+            self.excel.import_workbook(tracker_path, f"{idempotency_key}:tracker-import")
         self._reconcile_linked_mail()
         processed = 0
         for item in adapter.fetch():
@@ -409,10 +403,8 @@ class MailSyncService:
                     (
                         candidate
                         for candidate in self.applications.list()
-                        if normalize_identity(candidate.company)
-                        == normalize_identity(str(company))
-                        and normalize_identity(candidate.role)
-                        == normalize_identity(str(role))
+                        if normalize_identity(candidate.company) == normalize_identity(str(company))
+                        and normalize_identity(candidate.role) == normalize_identity(str(role))
                     ),
                     None,
                 )
@@ -469,11 +461,7 @@ class MailSyncService:
         for application_id, emails in by_application.items():
             emails.sort(key=lambda email: self._naive_utc(email.sent_at))
             receipt = next(
-                (
-                    email
-                    for email in emails
-                    if email.facts.get("当前阶段") == "已投递"
-                ),
+                (email for email in emails if email.facts.get("当前阶段") == "已投递"),
                 None,
             )
             if receipt:
@@ -497,13 +485,8 @@ class MailSyncService:
                 evidence=f"Date: {latest.sent_at.isoformat()}",
             )
             stage = latest.facts.get("当前阶段")
-            user_changed = self.applications.latest_user_change(
-                application_id, "当前阶段"
-            )
-            if stage and (
-                not user_changed
-                or sent_at > self._naive_utc(user_changed)
-            ):
+            user_changed = self.applications.latest_user_change(application_id, "当前阶段")
+            if stage and (not user_changed or sent_at > self._naive_utc(user_changed)):
                 self.applications.apply_field_change(
                     application_id,
                     "当前阶段",

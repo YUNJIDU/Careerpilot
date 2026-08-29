@@ -271,13 +271,14 @@ function MailPage({ settings, onDone }: { settings: Settings | null; onDone: () 
 function ExcelPage({ settings, onDone }: { settings: Settings | null; onDone: () => void }) {
   const [message, setMessage] = useState(""); const [error, setError] = useState("");
   const run = async (direction: "import" | "export") => {
+    if (direction === "import" && !confirm("Excel 是唯一真源。继续会永久删除 Excel 中不存在的岗位，并完整覆盖看板，是否继续？")) return;
     setError(""); setMessage("正在执行…");
-    try { await api.syncExcel(settings?.tracker_path ?? "tracker.xlsx", direction); setMessage(direction === "import" ? "Excel 导入完成。" : "Excel 导出完成。"); onDone(); }
+    try { const result = await api.syncExcel(settings?.tracker_path ?? "tracker.xlsx", direction); setMessage(direction === "import" ? `Excel 导入完成：新增 ${result.created ?? 0}、更新 ${result.updated ?? 0}、删除 ${result.deleted ?? 0}、简历映射 ${result.resume_mapped ?? 0}。` : "Excel 导出完成。"); onDone(); }
     catch (value) { setMessage(""); setError(String(value)); }
   };
   return <><header className="page-header"><div><p className="eyebrow">双向同步</p><h1>Excel 同步</h1><p>路径：{settings?.tracker_path ?? "tracker.xlsx"}</p></div></header>
     {message && <Notice kind="success">{message}</Notice>}{error && <Notice kind="error">{error}</Notice>}
-    <section className="panel"><h2>选择方向</h2><p>导入会把工作簿中的人工内容写入数据库；导出会生成最新 Tracker。</p><div className="actions"><button className="button" onClick={() => void run("import")}>从 Excel 导入</button><button className="button primary" onClick={() => void run("export")}>导出到 Excel</button></div></section>
+    <section className="panel"><h2>选择方向</h2><p>导入时 Excel 是唯一真源：完整覆盖看板，并永久删除 Excel 中不存在的岗位。导出会生成包含“当前简历”列的最新 Tracker。</p><div className="actions"><button className="button danger" onClick={() => void run("import")}>从 Excel 覆盖看板</button><button className="button primary" onClick={() => void run("export")}>导出到 Excel</button></div></section>
   </>;
 }
 
