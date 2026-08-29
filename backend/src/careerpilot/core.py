@@ -18,6 +18,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    delete,
     desc,
     or_,
     select,
@@ -43,9 +44,13 @@ def terminal_result(field: str, value: Any) -> tuple[str, str] | None:
     text = str(value or "").strip()
     if not text or not _TERMINAL_PATTERN.search(text):
         return None
-    step = field if field in PROCESS_FIELDS else next(
-        (candidate for candidate in reversed(PROCESS_FIELDS) if candidate in text),
-        "流程",
+    step = (
+        field
+        if field in PROCESS_FIELDS
+        else next(
+            (candidate for candidate in reversed(PROCESS_FIELDS) if candidate in text),
+            "流程",
+        )
     )
     reason = "主动结束" if re.search(r"主动|撤回|放弃", text) else "未通过"
     return step, reason
@@ -140,6 +145,31 @@ class EmailRecord(Base):
     raw_hash: Mapped[str] = mapped_column(String(64), unique=True)
     evidence: Mapped[dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ResumeVersionRecord(Base):
+    __tablename__ = "resume_versions"
+    __table_args__ = (
+        UniqueConstraint("resume_id", "version"),
+        UniqueConstraint("resume_id", "content_hash"),
+    )
+    version_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    resume_id: Mapped[str] = mapped_column(String(36))
+    version: Mapped[int] = mapped_column(Integer)
+    label: Mapped[str] = mapped_column(String(200))
+    filename: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(200))
+    size: Mapped[int] = mapped_column(Integer)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ApplicationResumeRecord(Base):
+    __tablename__ = "application_resumes"
+    application_id: Mapped[str] = mapped_column(
+        ForeignKey("applications.application_id"), primary_key=True
+    )
+    version_id: Mapped[str] = mapped_column(ForeignKey("resume_versions.version_id"))
 
 
 class SyncBatchRecord(Base):
@@ -252,6 +282,20 @@ class SummaryVersion:
     created_at: datetime
 
 
+@dataclass
+class ResumeVersion:
+    version_id: UUID
+    resume_id: UUID
+    version: int
+    label: str
+    filename: str
+    content_type: str
+    size: int
+    content_hash: str
+    application_ids: tuple[UUID, ...]
+    created_at: datetime
+
+
 def _application(record: ApplicationRecord) -> Application:
     return Application(
         application_id=UUID(record.application_id),
@@ -330,9 +374,7 @@ class ApplicationService:
             raise ValueError(f"unknown tracker field: {field}")
         with self.database.session() as session:
             duplicate = session.scalar(
-                select(ProvenanceRecord).where(
-                    ProvenanceRecord.idempotency_key == idempotency_key
-                )
+                select(ProvenanceRecord).where(ProvenanceRecord.idempotency_key == idempotency_key)
             )
             record = session.get(ApplicationRecord, str(application_id))
             if not record:
@@ -378,10 +420,7 @@ class ApplicationService:
                 if (
                     terminal
                     and field in PROCESS_FIELDS
-                    and (
-                        source in {"user", "mail_authoritative"}
-                        or "当前阶段" not in user_fields
-                    )
+                    and (source in {"user", "mail_authoritative"} or "当前阶段" not in user_fields)
                 ):
                     stage = terminal_label(*terminal)
                     updated["当前阶段"] = stage
@@ -506,9 +545,7 @@ class ExcelSyncService:
         rows = read_tracker(path)
         with self.database.session() as session:
             existing = session.scalar(
-                select(SyncBatchRecord).where(
-                    SyncBatchRecord.idempotency_key == idempotency_key
-                )
+                select(SyncBatchRecord).where(SyncBatchRecord.idempotency_key == idempotency_key)
             )
             if existing:
                 return 0
@@ -601,18 +638,17 @@ class EmailService:
             conditions = [EmailRecord.raw_hash == raw_hash]
             if message_id:
                 conditions.append(
-                    (EmailRecord.account_id == account_id)
-                    & (EmailRecord.message_id == message_id)
+                    (EmailRecord.account_id == account_id) & (EmailRecord.message_id == message_id)
                 )
             record = session.scalar(select(EmailRecord).where(or_(*conditions)))
-            application_id = UUID(record.application_id) if record and record.application_id else None
+            application_id = (
+                UUID(record.application_id) if record and record.application_id else None
+            )
             return record is not None, application_id
 
     def link(self, raw_hash: str, application_id: UUID, facts: dict[str, Any]) -> None:
         with self.database.session() as session:
-            record = session.scalar(
-                select(EmailRecord).where(EmailRecord.raw_hash == raw_hash)
-            )
+            record = session.scalar(select(EmailRecord).where(EmailRecord.raw_hash == raw_hash))
             if not record:
                 raise KeyError(raw_hash)
             record.application_id = str(application_id)
@@ -662,6 +698,124 @@ class EmailService:
                     evidence={"facts": {key: str(value) for key, value in facts.items()}},
                 )
             )
+
+
+class ResumeService:
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    @staticmethod
+    def _view(session: Session, record: ResumeVersionRecord) -> ResumeVersion:
+        links = session.scalars(
+            select(ApplicationResumeRecord).where(
+                ApplicationResumeRecord.version_id == record.version_id
+            )
+        )
+        return ResumeVersion(
+            version_id=UUID(record.version_id),
+            resume_id=UUID(record.resume_id),
+            version=record.version,
+            label=record.label,
+            filename=record.filename,
+            content_type=record.content_type,
+            size=record.size,
+            content_hash=record.content_hash,
+            application_ids=tuple(UUID(link.application_id) for link in links),
+            created_at=record.created_at,
+        )
+
+    def create_version(
+        self,
+        *,
+        label: str,
+        filename: str,
+        content_type: str,
+        size: int,
+        content_hash: str,
+        resume_id: UUID | None = None,
+    ) -> ResumeVersion:
+        requested = resume_id is not None
+        resume_id = resume_id or uuid4()
+        with self.database.session() as session:
+            records = list(
+                session.scalars(
+                    select(ResumeVersionRecord).where(
+                        ResumeVersionRecord.resume_id == str(resume_id)
+                    )
+                )
+            )
+            if requested and not records:
+                raise KeyError(resume_id)
+            if any(record.content_hash == content_hash for record in records):
+                raise ValueError("this resume version already exists")
+            record = ResumeVersionRecord(
+                version_id=str(uuid4()),
+                resume_id=str(resume_id),
+                version=max((item.version for item in records), default=0) + 1,
+                label=label,
+                filename=filename,
+                content_type=content_type,
+                size=size,
+                content_hash=content_hash,
+            )
+            session.add(record)
+            session.flush()
+            return self._view(session, record)
+
+    def list(self) -> list[ResumeVersion]:
+        with self.database.session() as session:
+            records = session.scalars(
+                select(ResumeVersionRecord).order_by(desc(ResumeVersionRecord.created_at))
+            )
+            return [self._view(session, record) for record in records]
+
+    def get(self, version_id: UUID) -> ResumeVersion:
+        with self.database.session() as session:
+            record = session.get(ResumeVersionRecord, str(version_id))
+            if not record:
+                raise KeyError(version_id)
+            return self._view(session, record)
+
+    def set_current(self, version_id: UUID, application_id: UUID) -> ResumeVersion:
+        with self.database.session() as session:
+            record = session.get(ResumeVersionRecord, str(version_id))
+            if not record or not session.get(ApplicationRecord, str(application_id)):
+                raise KeyError(version_id)
+            session.execute(
+                delete(ApplicationResumeRecord).where(
+                    ApplicationResumeRecord.application_id == str(application_id)
+                )
+            )
+            session.add(
+                ApplicationResumeRecord(
+                    application_id=str(application_id), version_id=str(version_id)
+                )
+            )
+            session.flush()
+            return self._view(session, record)
+
+    def delete_resume(self, resume_id: UUID) -> tuple[str, ...]:
+        with self.database.session() as session:
+            records = list(
+                session.scalars(
+                    select(ResumeVersionRecord).where(
+                        ResumeVersionRecord.resume_id == str(resume_id)
+                    )
+                )
+            )
+            if not records:
+                raise KeyError(resume_id)
+            version_ids = [record.version_id for record in records]
+            hashes = tuple({record.content_hash for record in records})
+            session.execute(
+                delete(ApplicationResumeRecord).where(
+                    ApplicationResumeRecord.version_id.in_(version_ids)
+                )
+            )
+            session.execute(
+                delete(ResumeVersionRecord).where(ResumeVersionRecord.resume_id == str(resume_id))
+            )
+            return hashes
 
 
 class JobService:

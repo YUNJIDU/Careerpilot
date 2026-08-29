@@ -72,6 +72,19 @@ export type Summary = {
   };
 };
 
+export type ResumeVersion = {
+  version_id: string;
+  resume_id: string;
+  version: number;
+  label: string;
+  filename: string;
+  content_type: string;
+  size: number;
+  application_ids: string[];
+  download_url: string;
+  created_at: string;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}${path}`, {
     ...init,
@@ -82,7 +95,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const detail = body.detail;
     throw new Error(typeof detail === "string" ? detail : detail?.code ?? `请求失败 (${response.status})`);
   }
-  return response.json() as Promise<T>;
+  return response.status === 204 ? undefined as T : response.json() as Promise<T>;
 }
 
 export const api = {
@@ -137,4 +150,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ path, direction, idempotency_key: crypto.randomUUID() }),
     }),
+  resumes: () => request<ResumeVersion[]>("/resumes"),
+  uploadResume: (file: File, label: string, resumeId?: string) =>
+    request<ResumeVersion>(`/resumes?filename=${encodeURIComponent(file.name)}&label=${encodeURIComponent(label)}${resumeId ? `&resume_id=${resumeId}` : ""}`, {
+      method: "POST",
+      headers: { "Content-Type": file.type || "application/octet-stream" },
+      body: file,
+    }),
+  setApplicationResume: (applicationId: string, versionId: string) =>
+    request<ResumeVersion>(`/applications/${applicationId}/resume/${versionId}`, { method: "PUT" }),
+  deleteResume: (resumeId: string) =>
+    request<void>(`/resumes/${resumeId}?confirmed=true`, { method: "DELETE" }),
+  resumeDownloadUrl: (versionId: string) => `${API}/resume-versions/${versionId}/content`,
 };

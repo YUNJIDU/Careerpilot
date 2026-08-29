@@ -1,11 +1,12 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { api, Application, ApplicationDetail, Job, Settings, Summary } from "./api";
+import { api, Application, ApplicationDetail, Job, ResumeVersion, Settings, Summary } from "./api";
 
-type Page = "overview" | "applications" | "detail" | "mail" | "excel" | "jobs" | "settings";
+type Page = "overview" | "applications" | "detail" | "resumes" | "mail" | "excel" | "jobs" | "settings";
 
 const NAV: Array<[Page, string, string]> = [
   ["overview", "总览", "⌂"],
   ["applications", "申请追踪", "▤"],
+  ["resumes", "简历", "▣"],
   ["mail", "邮件同步", "✉"],
   ["excel", "Excel 同步", "↔"],
   ["jobs", "任务", "◷"],
@@ -199,6 +200,51 @@ function SummaryView({ summary, versions }: { summary: Summary; versions: Summar
   return <article className="summary-result"><div className="summary-meta"><span className="badge">最新版本 v{summary.version}</span><span>{new Date(summary.created_at).toLocaleString()}</span><span>历史版本：{versions.map((item) => `v${item.version}`).join("、")}</span></div><p className="summary-overview">{summary.content.overview}</p><div className="summary-grid">{sections.map(([title, items]) => <section key={title}><h3>{title}</h3>{items.length ? <ul>{items.map((item, index) => <li key={`${title}-${index}`}>{item}</li>)}</ul> : <p>暂无信息</p>}</section>)}</div><h3>来源</h3><ol className="sources">{summary.content.sources.map((source) => <li key={source.url}><a href={source.url} target="_blank" rel="noreferrer">{source.title}</a><time>{new Date(source.fetched_at).toLocaleString()}</time></li>)}</ol></article>;
 }
 
+function ResumesPage({ applications }: { applications: Application[] }) {
+  const [versions, setVersions] = useState<ResumeVersion[]>([]);
+  const [mode, setMode] = useState("new");
+  const [resumeId, setResumeId] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const load = async () => setVersions(await api.resumes());
+  useEffect(() => { void load(); }, []);
+  const groups = [...new Map(versions.map((item) => [item.resume_id, item])).values()];
+  const upload = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); setError(""); setMessage("");
+    const form = event.currentTarget; const data = new FormData(form);
+    const file = data.get("file"); const label = String(data.get("label") ?? "").trim();
+    if (!(file instanceof File) || !file.size) { setError("请选择简历文件。"); return; }
+    try {
+      const version = await api.uploadResume(file, label, mode === "version" ? resumeId : undefined);
+      await Promise.all(data.getAll("applications").map(String).map((id) => api.setApplicationResume(id, version.version_id)));
+      form.reset(); setMode("new"); setResumeId(""); setMessage("简历已保存。"); await load();
+    } catch (value) { setError(String(value)); }
+  };
+  const assign = async (versionId: string, select: HTMLSelectElement) => {
+    if (!select.value) return;
+    try { await api.setApplicationResume(select.value, versionId); setMessage("岗位当前简历已更新。"); await load(); }
+    catch (value) { setError(String(value)); }
+  };
+  const remove = async (id: string, label: string) => {
+    if (!confirm(`永久删除“${label}”及其所有版本？相关岗位的当前简历会被清空。`)) return;
+    try { await api.deleteResume(id); setMessage("简历已永久删除。"); await load(); }
+    catch (value) { setError(String(value)); }
+  };
+  return <><header className="page-header"><div><p className="eyebrow">本地文件</p><h1>简历</h1><p>保存多份简历；每个岗位只使用一个当前版本。</p></div></header>
+    {message && <Notice kind="success">{message}</Notice>}{error && <Notice kind="error">{error}</Notice>}
+    <form className="panel form-stack" onSubmit={upload}><h2>上传简历</h2>
+      <label>文件<input name="file" type="file" accept=".pdf,.docx,.txt" required /></label>
+      <label>名称<input name="label" placeholder="例如：后端开发简历" maxLength={200} required /></label>
+      <label>归属方式<select value={mode} onChange={(event) => { setMode(event.target.value); setResumeId(""); }}><option value="new">新建一份简历</option><option value="version" disabled={!groups.length}>作为已有简历的新版本</option></select></label>
+      {mode === "version" && <label>已有简历<select value={resumeId} onChange={(event) => setResumeId(event.target.value)} required><option value="">请选择</option>{groups.map((item) => <option value={item.resume_id} key={item.resume_id}>{item.label}</option>)}</select></label>}
+      {!!applications.length && <fieldset><legend>同时设为岗位当前简历（可选）</legend>{applications.map((item) => <label className="checkbox" key={item.application_id}><input type="checkbox" name="applications" value={item.application_id} />{item.company} · {item.role}</label>)}</fieldset>}
+      <button className="button primary">保存简历</button>
+    </form>
+    <section className="panel"><h2>已保存简历</h2>{groups.length ? groups.map((group) => <article className="resume-card" key={group.resume_id}><div className="section-title"><div><h3>{group.label}</h3><p>{versions.filter((item) => item.resume_id === group.resume_id).length} 个版本</p></div><button className="button danger" onClick={() => void remove(group.resume_id, group.label)}>永久删除</button></div>
+      {versions.filter((item) => item.resume_id === group.resume_id).map((item) => <div className="resume-version" key={item.version_id}><div><b>v{item.version} · {item.filename}</b><small>{(item.size / 1024).toFixed(1)} KiB · {new Date(item.created_at).toLocaleString()}</small><span>使用岗位：{item.application_ids.map((id) => applications.find((app) => app.application_id === id)?.company).filter(Boolean).join("、") || "无"}</span></div><div className="actions"><a className="button" href={api.resumeDownloadUrl(item.version_id)}>下载</a><select aria-label="选择岗位" defaultValue=""><option value="">选择岗位</option>{applications.map((app) => <option value={app.application_id} key={app.application_id}>{app.company} · {app.role}</option>)}</select><button className="button" onClick={(event) => void assign(item.version_id, event.currentTarget.previousElementSibling as HTMLSelectElement)}>设为当前</button></div></div>)}</article>) : <p className="empty">还没有简历。</p>}</section>
+  </>;
+}
+
 function MailPage({ settings, onDone }: { settings: Settings | null; onDone: () => void }) {
   const [since, setSince] = useState(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10));
   const [limit, setLimit] = useState(100);
@@ -293,6 +339,7 @@ export default function App() {
   if (current.page === "overview") content = <Overview applications={applications} jobs={jobs} />;
   else if (current.page === "applications") content = <ApplicationsPage onChanged={changed} />;
   else if (current.page === "detail" && current.id) content = <DetailPage id={current.id} onChanged={changed} />;
+  else if (current.page === "resumes") content = <ResumesPage applications={applications} />;
   else if (current.page === "mail") content = <MailPage settings={settings} onDone={changed} />;
   else if (current.page === "excel") content = <ExcelPage settings={settings} onDone={changed} />;
   else if (current.page === "jobs") content = <JobsPage refresh={refresh} />;
