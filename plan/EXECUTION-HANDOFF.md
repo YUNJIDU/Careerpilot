@@ -102,6 +102,15 @@ CareerPilot 是辅助求职 Agent，不替用户查看邮件、作求职决定�
 - Stage 结束时运行全量检查，完成 Demo，并逐条验证 Exit Gate。
 - 未通过 Exit Gate，不进入下一 Stage。
 
+## Stage 5–6 接手规则
+
+- Stage 5 模块先作为可独立运行和测试的 Service/LangGraph 子图实现，Stage 6 再由 Career Assistant 统一编排。
+- Research、Evaluation、Resume、Interview 和 Reviewer Agent 都是允许加入的后续方向，但不是无条件编码清单。
+- 开发者必须先说明真实用户需求、使用场景、现有模块的不足、数据边界和端到端验收方式，再决定使用普通 Service、LangGraph 子图或独立 Agent。
+- 没有实际瓶颈时保持单 Orchestrator；有证据时可以逐个将现有模块升级为专用 Agent，不重写 Application Core。
+- 禁止只交付页面、接口、Agent 名称或演示数据而没有真实可用的核心流程。
+- A–G 分析、评分和 Prompt 边界可参考 [`santifer/career-ops`](https://github.com/santifer/career-ops)，但不得机械复制其完整运行时和数据架构。
+
 ## 可复制到新对话的提示词
 
 ```text
