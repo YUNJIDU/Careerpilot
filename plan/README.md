@@ -1,6 +1,6 @@
 # CareerPilot 规划索引
 
-更新时间：2026-07-26
+更新时间：2026-08-29
 
 新对话开始实施时，先阅读：[执行交接](EXECUTION-HANDOFF.md)。
 
@@ -12,7 +12,7 @@ CareerPilot 是辅助求职 Agent，不是替用户完成求职的全权 Agent�
 
 首发框架基线：
 
-- Windows 原生优先跑通，随后提供 Docker。
+- Windows 原生优先跑通；Docker、安装包和自动更新在核心功能完善后处理。
 - 单用户，可管理多份简历和多个邮箱账户。
 - Python/FastAPI + React/TypeScript/Vite + SQLite。
 - Apache License 2.0。
@@ -46,9 +46,9 @@ CareerPilot 是辅助求职 Agent，不是替用户完成求职的全权 Agent�
 3. [Stage 2：Application 核心数据库](stages/stage-02-application-core.md)
 4. [Stage 3：邮箱同步与客观信息提取](stages/stage-03-core-processing-pipeline.md)
 5. [Stage 4：本地 Web、岗位文档与 Summary](stages/stage-04-mvp-output-and-debug-ui.md)
-6. [Stage 5：求职智能功能模块](stages/stage-05-career-intelligence-modules.md)
-7. [Stage 6：Agent 与 Orchestrator Multi-Agent](stages/stage-06-agent-orchestration.md)
-8. [Stage 7：外部系统与自动化扩展](stages/stage-07-external-integrations.md)
+6. [Stage 5：求职智能、A–G 评估、简历建议与面试准备](stages/stage-05-career-intelligence-modules.md)
+7. [Stage 6：统一 Career Assistant](stages/stage-06-agent-orchestration.md)
+8. [Stage 7：外部自动化与人工确认辅助](stages/stage-07-external-integrations.md)
 9. [Stage 8：生产部署与商业化](stages/stage-08-deployment-and-commercialization.md)
 
 ## Sprint
@@ -63,18 +63,20 @@ CareerPilot 是辅助求职 Agent，不是替用户完成求职的全权 Agent�
 2. [整体系统框架](map/flow-01-overall.md)
 3. [邮件到 Tracker](map/flow-02-mail-to-tracker.md)
 4. [阶段 Summary 路由](map/flow-03-stage-routing.md)
-5. [后续 Orchestrator Multi-Agent 时序](map/flow-04-multi-agent-sequence.md)
+5. [统一 Career Assistant 时序](map/flow-04-multi-agent-sequence.md)
 
 ## 当前明确不做
 
 - 岗位发现、职位推荐或招聘网站聚合。
-- 替用户判断是否申请、是否参加、是否接受或拒绝。
+- 替用户执行申请、参加、接受或拒绝；系统可以给出有证据的评分和建议。
 - 首发版本中的模拟题、模拟面试、自动评分和训练计划。
 - 首发版本中的未读监控、主动提醒和紧急通知。
 - 登录第三方账号、绕过反爬或付费墙。
 - 首发版本中的自动填表、自动投递和自动提交。
-- 用 Multi-Agent 阻塞首发闭环。
+- 在单一 Career Assistant 已能完成任务时引入 Multi-Agent。
 
 ## 推荐阅读顺序
 
-先阅读首发版本计划和 WBS，再依次完成 Stage 0–4。Stage 5–8 保留为后续扩展；进入具体 Stage 时，再为该 Stage 补充详细设计，不提前锁死尚未讨论的实现细节。
+先以 Stage 0–4 为稳定基线，再完成 Stage 4B+ Summary 考点情报、Stage 5
+四组求职智能和 Stage 6 单一 Career Assistant。Stage 7 接入外部辅助，Stage
+8 在核心功能完善后再做部署与产品化；不提前搭建 Multi-Agent 或云基础设施。

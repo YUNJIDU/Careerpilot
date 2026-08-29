@@ -8,7 +8,7 @@
 - 每个任务先写失败测试或契约测试，再实现最小功能。
 - 业务规则只存在于 Application Service，不复制到 API、Excel、前端或 Agent。
 - 每个 Stage 结束必须完成 Windows 演示、测试报告、安全检查和文档更新。
-- Docker 在 Stage 4 完成首发闭环后作为第二环境验证。
+- Docker 在核心业务功能完善后进入 Stage 8，不阻塞当前实施。
 
 ## Stage 依赖
 
@@ -21,7 +21,7 @@ Stage 2 SQLite、Application Core、持久化和双向写入
    ↓
 Stage 3 MailAdapter、163、提取、附件与断点
    ↓
-Stage 4 React Web、Markdown、Summary、Docker 与首发验收
+Stage 4 React Web、Markdown、Summary 与首发验收
 ```
 
 ## 跨 Stage 决策
@@ -51,5 +51,11 @@ Windows 启动
   → 查看岗位详情和证据
   → 手动生成 Summary
   → 中断后从检查点继续
-  → Docker 使用同一数据契约启动
 ```
+
+## 首发后的计划
+
+- [Stage 5：求职智能、A–G 评估、简历建议与面试准备](../stages/stage-05-career-intelligence-modules.md)
+- [Stage 6：统一 Career Assistant](../stages/stage-06-agent-orchestration.md)
+- [Stage 7：外部自动化与人工确认辅助](../stages/stage-07-external-integrations.md)
+- [Stage 8：生产部署与商业化](../stages/stage-08-deployment-and-commercialization.md)

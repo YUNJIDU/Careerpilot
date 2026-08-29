@@ -9,7 +9,7 @@ flowchart TD
     S4["Stage 4<br/>本地 Web 与手动 Summary"]
     M["首发技术用户版本"]
     S5["Stage 5<br/>求职智能扩展模块"]
-    S6["Stage 6<br/>Orchestrator Multi-Agent"]
+    S6["Stage 6<br/>统一 Career Assistant"]
     S7["Stage 7<br/>提醒、更多邮箱、验证码与自动填表"]
     S8["Stage 8<br/>普通用户产品化与商业化"]
 

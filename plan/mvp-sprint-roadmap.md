@@ -77,3 +77,14 @@ Excel → SQLite → 修改数据库 → Excel → 用户修改 Excel → SQLite
 - 所有提取信息和 Summary 事实可回溯来源。
 - 本地数据与外部调用边界对用户可见。
 - 不依赖提醒、模拟训练、自动填表或 Multi-Agent 才能交付。
+
+## 首发后的实施组
+
+1. Stage 4B+：在 Summary 中加入带证据等级的常见/可能考点情报。
+2. Stage 5.1：稳定情报服务与结构化输出契约。
+3. Stage 5.2：使用 LangGraph 实现 A–G 岗位评估和 1–5 分建议。
+4. Stage 5.3：只输出简历修改建议和可复制文本，不修改简历文件。
+5. Stage 5.4：笔试与面试准备材料。
+6. Stage 6：统一 Career Assistant 编排上述能力，不先做 Multi-Agent。
+7. Stage 7：提醒、日历、通知、人工确认的浏览器预填和回复草稿。
+8. Stage 8：Docker/安装发布、安全部署，以及更晚的多用户与商业化。

@@ -2,7 +2,7 @@
 
 ## Goal
 
-完成首发用户闭环、Windows 验收和 Docker 验证。
+完成首发用户闭环和 Windows 验收。
 
 ## Entry
 
@@ -13,7 +13,7 @@
 
 - Stage 4A complete: S4.1 Web shell, S4.2 local settings/secret status,
   S4.3 editable Tracker/Application Detail, and S4.7 Jobs UI.
-- Next: Stage 4B Markdown and manual Summary, then Stage 4C Docker acceptance.
+- Stage 4B Markdown and manual Summary complete. Docker is deferred to Stage 8.
 
 ## Work Packages
 
@@ -98,19 +98,10 @@
 - Agent 不直接访问 ORM、文件系统或秘密。
 - 非 Agent API 仍可完成全部核心流程。
 
-### S4.9 Docker
-
-- 多阶段构建。
-- 非 root 运行。
-- data volume 和 secret 注入。
-- healthcheck。
-- 与 Windows 使用同一 Alembic 和契约。
-
-### S4.10 首发验收
+### S4.9 首发验收
 
 - 完整 E2E。
 - Windows 原生启动文档。
-- Docker 启动文档。
 - 安全回归和依赖扫描。
 - 脱敏演示数据。
 - 已知限制和故障恢复手册。
@@ -121,10 +112,9 @@
 2. Summary 事实带来源、时间和不确定性。
 3. 所有任务失败可见且可恢复。
 4. Windows 全量测试通过。
-5. Docker 构建、迁移、启动和冒烟通过。
-6. 无首发范围外功能成为必要依赖。
-7. 安全、许可证、secret 和依赖扫描通过。
+5. 无首发范围外功能成为必要依赖。
+6. 安全、许可证、secret 和依赖扫描通过。
 
 ## Demo
 
-从全新 Windows 环境启动，配置样本/163、同步、查看 Tracker、修改 Excel、查看详情、生成 Summary、模拟中断恢复，再用同一 fixtures 完成 Docker 冒烟。
+从全新 Windows 环境启动，配置样本/163、同步、查看 Tracker、修改 Excel、查看详情、生成 Summary并模拟中断恢复。
