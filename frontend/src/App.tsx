@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { api, Application, ApplicationDetail, Job, ResumeVersion, Settings, Summary } from "./api";
+import WelcomePage from "./WelcomePage";
 
-type Page = "overview" | "applications" | "detail" | "resumes" | "mail" | "excel" | "jobs" | "settings";
+type Page = "welcome" | "overview" | "applications" | "detail" | "resumes" | "mail" | "excel" | "jobs" | "settings";
 
 const NAV: Array<[Page, string, string]> = [
   ["overview", "总览", "⌂"],
@@ -35,8 +36,9 @@ function StageBadge({ value }: { value: unknown }) {
 }
 
 function route(): { page: Page; id?: string } {
-  const value = location.hash.slice(2) || "overview";
+  const value = location.hash.slice(2) || "welcome";
   if (value.startsWith("applications/")) return { page: "detail", id: value.split("/")[1] };
+  if (value === "welcome") return { page: "welcome" };
   return { page: (NAV.some(([key]) => key === value) ? value : "overview") as Page };
 }
 
@@ -324,6 +326,7 @@ function SettingsPage({ value, onSaved }: { value: Settings | null; onSaved: (se
 
 export default function App() {
   const current = useRoute();
+  const isWelcome = current.page === "welcome";
   const [applications, setApplications] = useState<Application[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -334,8 +337,9 @@ export default function App() {
     ]);
     setApplications(nextApplications); setJobs(nextJobs); setSettings(nextSettings);
   };
-  useEffect(() => { void reload(); }, [refresh]);
+  useEffect(() => { if (!isWelcome) void reload(); }, [refresh, isWelcome]);
   const changed = () => setRefresh((value) => value + 1);
+  if (isWelcome) return <WelcomePage />;
   let content: React.ReactNode;
   if (current.page === "overview") content = <Overview applications={applications} jobs={jobs} />;
   else if (current.page === "applications") content = <ApplicationsPage onChanged={changed} />;
@@ -345,5 +349,5 @@ export default function App() {
   else if (current.page === "excel") content = <ExcelPage settings={settings} onDone={changed} />;
   else if (current.page === "jobs") content = <JobsPage refresh={refresh} />;
   else content = <SettingsPage value={settings} onSaved={(next) => { setSettings(next); changed(); }} />;
-  return <div className="app-shell"><aside><a className="brand" href="#/overview"><span>CP</span><div><b>CareerPilot</b><small>职业领航员</small></div></a><nav>{NAV.map(([page, label, icon]) => <a key={page} href={`#/${page}`} className={current.page === page || (current.page === "detail" && page === "applications") ? "active" : ""}><span>{icon}</span>{label}</a>)}</nav><div className="local"><i />本地运行 · 9998</div></aside><main>{content}</main></div>;
+  return <div className="app-shell"><aside><a className="brand" href="#/welcome"><span>CP</span><div><b>CareerPilot</b><small>职业领航员</small></div></a><nav>{NAV.map(([page, label, icon]) => <a key={page} href={`#/${page}`} className={current.page === page || (current.page === "detail" && page === "applications") ? "active" : ""}><span>{icon}</span>{label}</a>)}</nav><div className="local"><i />本地运行 · 9998</div></aside><main>{content}</main></div>;
 }

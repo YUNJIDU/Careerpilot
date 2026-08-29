@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from careerpilot.api import create_app
+from careerpilot.safe_files import MAX_RESUME_BYTES
 
 
 def test_resume_versions_current_assignment_and_permanent_delete(tmp_path: Path) -> None:
@@ -45,3 +46,22 @@ def test_resume_versions_current_assignment_and_permanent_delete(tmp_path: Path)
     assert client.delete(f"/api/v1/resumes/{first['resume_id']}?confirmed=true").status_code == 204
     assert client.get("/api/v1/resumes").json() == []
     assert list((tmp_path / "resumes").iterdir()) == []
+
+
+def test_resume_upload_rejects_unsafe_files(tmp_path: Path) -> None:
+    client = TestClient(create_app(data_dir=tmp_path))
+
+    wrong_type = client.post(
+        "/api/v1/resumes?filename=resume.pdf&label=Backend",
+        content=b"not a pdf",
+        headers={"content-type": "application/pdf"},
+    )
+    assert wrong_type.status_code == 422
+
+    oversized = client.post(
+        "/api/v1/resumes?filename=resume.txt&label=Backend",
+        content=b"x" * (MAX_RESUME_BYTES + 1),
+        headers={"content-type": "text/plain"},
+    )
+    assert oversized.status_code == 413
+    assert not (tmp_path / "resumes").exists()

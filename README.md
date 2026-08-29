@@ -5,8 +5,9 @@ Excel reconciliation, evidence timelines, and recoverable jobs.
 
 ## Project status
 
-- Completed: Stage 0–3 and Stage 4A–4B Web workspace, Markdown, and manual Summary
-- Next: Stage 4C — Docker first-release acceptance
+- Completed: Stage 0–3, Stage 4A–4B, multi-resume management, and Excel source-of-truth sync
+- Current: streamlined Stage 4C-Windows — welcome UI, local security, and Windows release baseline
+- Later release work: Docker, authentication, HTTPS, auto-update, and installer packaging
 - Planned: Stage 0–8
 
 Start with the [execution handoff](plan/EXECUTION-HANDOFF.md), then use the
@@ -16,6 +17,24 @@ Start with the [execution handoff](plan/EXECUTION-HANDOFF.md), then use the
 defines the product and architecture boundaries.
 
 ## Windows development
+
+After installing the dependencies below, start both services and open the welcome page with:
+
+```powershell
+.\start-careerpilot.ps1
+```
+
+The command can be run again when CareerPilot is already running. Logs are written to
+`data/logs/`. If ports `9998` or `9999` belong to another program, the command stops
+and reports the conflicting port instead of starting a second service.
+
+Run the local release checks with:
+
+```powershell
+.\check-release.ps1
+```
+
+Initial dependency setup:
 
 ```powershell
 python -m venv .venv
@@ -76,5 +95,5 @@ The mailbox adapter uses IMAP TLS, identifies the client to 163, selects
 `INBOX` read-only, and fetches with `BODY.PEEK[]`. Runtime output is written to
 `data/careerpilot.db` and `data/tracker.xlsx`.
 
-Runtime data belongs in `data/` and must not be committed. Docker support is
-delivered in Stage 4C.
+Runtime data belongs in `data/` and must not be committed. Docker and the wider
+release packaging are intentionally deferred until the core product features are stable.

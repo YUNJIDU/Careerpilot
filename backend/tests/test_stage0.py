@@ -22,6 +22,14 @@ def test_health_and_local_cors() -> None:
         },
     )
     assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:9999"
+    rejected = client.options(
+        "/api/v1/health",
+        headers={
+            "Origin": "https://example.com",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert "access-control-allow-origin" not in rejected.headers
 
 
 def test_contract_requires_timezone() -> None:
