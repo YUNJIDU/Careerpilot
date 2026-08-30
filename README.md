@@ -24,6 +24,9 @@ After installing the dependencies below, start both services and open the welcom
 .\start-careerpilot.ps1
 ```
 
+You can also double-click `启动CareerPilot.cmd` to start both services and
+`关闭CareerPilot.cmd` to stop only the recorded CareerPilot processes.
+
 The command can be run again when CareerPilot is already running. Logs are written to
 `data/logs/`. If ports `9998` or `9999` belong to another program, the command stops
 and reports the conflicting port instead of starting a second service.
