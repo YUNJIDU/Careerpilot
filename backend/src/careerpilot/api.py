@@ -484,7 +484,7 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
-            processed = mail.sync(
+            result = mail.sync(
                 adapter(request),
                 request.account_id,
                 tracker_path,
@@ -496,7 +496,7 @@ def create_app(
                 status_code=502,
                 detail={"code": "mail.sync_failed", "job_id": str(exc.job_id)},
             ) from exc
-        return {"job_id": str(job.job_id), "processed": processed}
+        return {"job_id": str(job.job_id), **result}
 
     @app.post("/api/v1/jobs/{job_id}/resume")
     def resume_job(job_id: UUID) -> dict[str, object]:
@@ -540,7 +540,7 @@ def create_app(
             raise HTTPException(status_code=409, detail="job resume checkpoint is invalid") from exc
         resumed = jobs.create("mail_sync", request.idempotency_key)
         try:
-            processed = mail.sync(
+            result = mail.sync(
                 adapter(request),
                 request.account_id,
                 tracker_path,
@@ -552,7 +552,7 @@ def create_app(
                 status_code=502,
                 detail={"code": "mail.sync_failed", "job_id": str(exc.job_id)},
             ) from exc
-        return {"job_id": str(resumed.job_id), "processed": processed}
+        return {"job_id": str(resumed.job_id), **result}
 
     return app
 

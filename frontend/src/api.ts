@@ -141,7 +141,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   syncMail: (body: Record<string, unknown>) =>
-    request<{ job_id: string; processed: number }>("/mail-sync-jobs", {
+    request<{ job_id: string; processed: number; new_emails: number; created: number; updated: number; unchanged: number; unlinked: number }>("/mail-sync-jobs", {
       method: "POST",
       body: JSON.stringify({ ...body, idempotency_key: crypto.randomUUID() }),
     }),
