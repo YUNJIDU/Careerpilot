@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 $ErrorActionPreference = "Stop"
@@ -6,6 +6,7 @@ $projectRoot = $PSScriptRoot
 $python = Join-Path $projectRoot ".venv\Scripts\python.exe"
 $frontend = Join-Path $projectRoot "frontend"
 $logDirectory = Join-Path $projectRoot "data\logs"
+$processStateFile = Join-Path $projectRoot "data\careerpilot-processes.json"
 $welcomeUrl = "http://127.0.0.1:9999/#/welcome"
 
 function Test-Url([string]$Url) {
@@ -27,6 +28,16 @@ function Wait-Url([string]$Url, [string]$Name) {
         Start-Sleep -Seconds 1
     }
     throw "$Name 启动超时。请查看 data\logs 中的日志。"
+}
+
+function Get-ListenerRecord([int]$Port) {
+    $connection = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Stop |
+        Select-Object -First 1
+    $process = Get-Process -Id $connection.OwningProcess -ErrorAction Stop
+    return [ordered]@{
+        pid = $process.Id
+        started_at_utc = $process.StartTime.ToUniversalTime().ToString("o")
+    }
 }
 
 if (-not (Test-Path -LiteralPath $python)) {
@@ -66,6 +77,14 @@ if (-not $frontendHealthy) {
         -RedirectStandardError (Join-Path $logDirectory "frontend.err.log")
     Wait-Url "http://127.0.0.1:9999" "前端"
 }
+
+$processState = [ordered]@{
+    backend = Get-ListenerRecord 9998
+    frontend = Get-ListenerRecord 9999
+}
+$temporaryStateFile = "$processStateFile.tmp"
+$processState | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $temporaryStateFile -Encoding UTF8
+Move-Item -LiteralPath $temporaryStateFile -Destination $processStateFile -Force
 
 Write-Host "CareerPilot 已就绪：$welcomeUrl" -ForegroundColor Green
 Start-Process $welcomeUrl
