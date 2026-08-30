@@ -259,7 +259,7 @@ function MailPage({ settings, onDone }: { settings: Settings | null; onDone: () 
       if (test) { await api.testMail(body); setMessage("163 邮箱连接正常。"); }
       else {
         const result = await api.syncMail({ ...body, tracker_path: settings?.tracker_path });
-        setMessage(`同步完成，处理 ${result.processed} 封相关邮件。`); onDone();
+        setMessage(`同步完成：新邮件 ${result.new_emails}、创建岗位 ${result.created}、更新岗位 ${result.updated}、无字段变化 ${result.unchanged}、待关联 ${result.unlinked}。`); onDone();
       }
     } catch (value) { setMessage(""); setError(String(value)); }
   };

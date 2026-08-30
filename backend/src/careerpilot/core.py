@@ -758,13 +758,22 @@ class EmailService:
             )
             return record is not None, application_id
 
-    def link(self, raw_hash: str, application_id: UUID, facts: dict[str, Any]) -> None:
+    def link(
+        self,
+        raw_hash: str,
+        application_id: UUID,
+        facts: dict[str, Any],
+        mail_kind: str | None = None,
+    ) -> None:
         with self.database.session() as session:
             record = session.scalar(select(EmailRecord).where(EmailRecord.raw_hash == raw_hash))
             if not record:
                 raise KeyError(raw_hash)
             record.application_id = str(application_id)
-            record.evidence = {"facts": {key: str(value) for key, value in facts.items()}}
+            record.evidence = {
+                "facts": {key: str(value) for key, value in facts.items()},
+                "mail_kind": mail_kind,
+            }
 
     def linked(self) -> list[StoredEmail]:
         with self.database.session() as session:
@@ -795,6 +804,7 @@ class EmailService:
         sent_at: datetime | None,
         application_id: UUID | None,
         facts: dict[str, Any],
+        mail_kind: str | None = None,
     ) -> None:
         with self.database.session() as session:
             session.add(
@@ -807,7 +817,10 @@ class EmailService:
                     sender=sender,
                     sent_at=sent_at,
                     raw_hash=raw_hash,
-                    evidence={"facts": {key: str(value) for key, value in facts.items()}},
+                    evidence={
+                        "facts": {key: str(value) for key, value in facts.items()},
+                        "mail_kind": mail_kind,
+                    },
                 )
             )
 

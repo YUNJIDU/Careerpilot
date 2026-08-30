@@ -249,6 +249,23 @@ _JOB_KEYWORDS = re.compile(
 )
 
 
+def _is_role(value: str, company: str = "") -> bool:
+    if len(value) > 100 or re.search(r"[，。；！？]", value):
+        return False
+    if re.search(
+        r"(?:人力资源部|招聘(?:团队|部门|组)|校园招聘(?:团队|组)|人才招聘(?:中心|团队))$",
+        value,
+    ):
+        return False
+    return not (
+        company
+        and re.fullmatch(
+            rf"{re.escape(company)}20\d{{2}}(?:届)?(?:校园招聘|校招)[。！!]*",
+            value,
+        )
+    )
+
+
 def extract_facts(value: str, sender: str = "") -> dict[str, object]:
     text = html_to_text(value) if "<" in value and ">" in value else value
     facts: dict[str, object] = {}
@@ -263,6 +280,9 @@ def extract_facts(value: str, sender: str = "") -> dict[str, object]:
             except ValueError:
                 continue
         facts[field] = extracted
+    role = str(facts.get("岗位") or "")
+    if role and not _is_role(role, str(facts.get("公司名称") or "")):
+        facts.pop("岗位", None)
     if "公司名称" not in facts:
         company_patterns = (
             r"感谢您投递【([^】]+)】",
@@ -289,7 +309,7 @@ def extract_facts(value: str, sender: str = "") -> dict[str, object]:
             match = re.search(pattern, text)
             if match:
                 role = match.group(1).strip(" ！!-")
-                if role:
+                if role and _is_role(role, str(facts.get("公司名称") or "")):
                     facts["岗位"] = role
                     break
     if "公司名称" not in facts and "岗位" in facts and re.search(r"我公司|本公司", text):
@@ -327,6 +347,22 @@ def extract_facts(value: str, sender: str = "") -> dict[str, object]:
                 facts[step] = "未通过"
             display_step = "简历" if step == "简历通过" else step
             facts["当前阶段"] = terminal_label(display_step, "未通过")
+        elif re.search(
+            r"AI\s*面试.{0,20}(?:邀请|安排)|邀请.{0,20}AI\s*面试",
+            text,
+            re.IGNORECASE,
+        ):
+            facts["一面"] = "AI 面试"
+            facts["当前阶段"] = "一面"
+        elif re.search(r"(?:线上|在线)?测评.{0,20}(?:邀请|安排)|邀请.{0,20}(?:线上|在线)?测评", text):
+            facts["测评"] = "待完成"
+            facts["当前阶段"] = "测评"
+        elif re.search(r"(?:笔试|考试).{0,20}(?:邀请|安排)|邀请.{0,20}(?:笔试|考试)", text):
+            facts["笔试"] = "待完成"
+            facts["当前阶段"] = "笔试"
+        elif re.search(r"面试.{0,20}(?:邀请|安排)|邀请.{0,20}面试", text):
+            facts["一面"] = "待参加"
+            facts["当前阶段"] = "一面"
         elif re.search(r"(?:笔试|考试)成绩.{0,12}(?:查询|公布|发布|开放|可查|已开通)", text):
             facts["当前阶段"] = "笔试成绩可查询"
         elif re.search(r"完善简历", text):
@@ -338,6 +374,28 @@ def extract_facts(value: str, sender: str = "") -> dict[str, object]:
         ):
             facts["当前阶段"] = "已投递"
     return facts
+
+
+def classify_mail(value: str) -> str:
+    if re.search(
+        r"AI\s*面试.{0,20}(?:邀请|安排)|邀请.{0,20}AI\s*面试",
+        value,
+        re.IGNORECASE,
+    ):
+        return "ai_interview"
+    if re.search(r"(?:线上|在线)?测评.{0,20}(?:邀请|安排)|邀请.{0,20}(?:线上|在线)?测评", value):
+        return "assessment"
+    if re.search(r"(?:笔试|考试).{0,20}(?:邀请|安排)|邀请.{0,20}(?:笔试|考试)", value):
+        return "written_test"
+    if re.search(r"面试.{0,20}(?:邀请|安排)|邀请.{0,20}面试", value):
+        return "interview"
+    if re.search(
+        r"投递成功|提交成功|感谢.{0,8}(?:投递|应聘)|"
+        r"(?:已经|已|我们已经)?收到.{0,4}(?:您的)?(?:简历|申请)",
+        value,
+    ):
+        return "application_received"
+    return "status"
 
 
 def is_job_candidate(item: MailItem) -> bool:
@@ -359,7 +417,7 @@ class MailSyncService:
         tracker_path: Path,
         idempotency_key: str,
         resume_payload: dict[str, object] | None = None,
-    ) -> int:
+    ) -> dict[str, int]:
         job = self.jobs.create("mail_sync", idempotency_key)
         if resume_payload:
             self.jobs.progress(job.job_id, "configured", resume_payload)
@@ -380,24 +438,46 @@ class MailSyncService:
         tracker_path: Path,
         job: PersistentJob,
         idempotency_key: str,
-    ) -> int:
+    ) -> dict[str, int]:
         if tracker_path.exists():
             self.excel.import_workbook(tracker_path, f"{idempotency_key}:tracker-import")
-        self._reconcile_linked_mail()
-        processed = 0
-        for item in adapter.fetch():
+        stats = {
+            "processed": 0,
+            "new_emails": 0,
+            "created": 0,
+            "updated": 0,
+            "unchanged": 0,
+            "unlinked": 0,
+        }
+        known_ids = {item.application_id for item in self.applications.list()}
+        created_ids: set[UUID] = set()
+        updated_ids: set[UUID] = set()
+        anchors: dict[str, list[tuple[datetime, UUID]]] = {}
+        fetched = adapter.fetch()
+        items = (
+            sorted(
+                fetched,
+                key=lambda item: (
+                    self._naive_utc(item.sent_at).replace(tzinfo=UTC)
+                    if item.sent_at
+                    else datetime.min.replace(tzinfo=UTC)
+                ),
+            )
+            if isinstance(fetched, list)
+            else fetched
+        )
+        for item in items:
             if not is_job_candidate(item):
                 continue
             exists, linked_application_id = self.emails.find(
                 account_id, item.raw_hash, item.message_id
             )
-            if linked_application_id:
-                continue
-            facts = extract_facts(f"{item.subject}\n{item.text}", item.sender)
+            text = f"{item.subject}\n{item.text}"
+            facts = extract_facts(text, item.sender)
+            mail_kind = classify_mail(text)
             company, role = facts.get("公司名称"), facts.get("岗位")
-            if company and not role and facts.get("当前阶段"):
-                role = facts["岗位"] = "岗位待确认"
             application_id = None
+            created_now = False
             if company and role:
                 application = next(
                     (
@@ -408,12 +488,68 @@ class MailSyncService:
                     ),
                     None,
                 )
-                application = application or self.applications.create(
-                    str(company),
-                    str(role),
-                    idempotency_key=f"mail-app:{company}:{role}",
-                )
+                if application is None:
+                    application = self.applications.create(
+                        str(company),
+                        str(role),
+                        idempotency_key=f"mail-app:{company}:{role}",
+                    )
+                    if application.application_id not in known_ids:
+                        created_ids.add(application.application_id)
+                        known_ids.add(application.application_id)
+                        created_now = True
                 application_id = application.application_id
+                if mail_kind == "application_received" and item.sent_at:
+                    anchors.setdefault(normalize_identity(str(company)), []).append(
+                        (self._naive_utc(item.sent_at), application_id)
+                    )
+            elif company and mail_kind == "application_received":
+                company_key = normalize_identity(str(company))
+                used = {anchor_id for _, anchor_id in anchors.get(company_key, [])}
+                application = None
+                if linked_application_id and linked_application_id not in used:
+                    linked = self.applications.get(linked_application_id)
+                    if normalize_identity(linked.company) == company_key:
+                        application = linked
+                if application is None:
+                    application = self.applications.create(
+                        str(company),
+                        "岗位待确认",
+                        idempotency_key=f"mail-receipt:{account_id}:{item.raw_hash}",
+                    )
+                    if application.application_id not in known_ids:
+                        created_ids.add(application.application_id)
+                        known_ids.add(application.application_id)
+                        created_now = True
+                application_id = application.application_id
+                if item.sent_at:
+                    anchors.setdefault(company_key, []).append(
+                        (self._naive_utc(item.sent_at), application_id)
+                    )
+            elif company and item.sent_at:
+                candidates = [
+                    anchor
+                    for anchor in anchors.get(normalize_identity(str(company)), [])
+                    if anchor[0] <= self._naive_utc(item.sent_at)
+                ]
+                if candidates:
+                    application_id = max(candidates, key=lambda anchor: anchor[0])[1]
+                elif mail_kind == "status" and facts.get("当前阶段"):
+                    application = self.applications.create(
+                        str(company),
+                        "岗位待确认",
+                        idempotency_key=f"mail-status:{account_id}:{item.raw_hash}",
+                    )
+                    application_id = application.application_id
+                    if application_id not in known_ids:
+                        created_ids.add(application_id)
+                        known_ids.add(application_id)
+                        created_now = True
+
+            before_version = (
+                self.applications.get(application_id).version if application_id else None
+            )
+            if application_id:
                 for field, value in facts.items():
                     if field in {"公司名称", "岗位"}:
                         continue
@@ -424,14 +560,21 @@ class MailSyncService:
                         field,
                         value,
                         source="mail",
-                        idempotency_key=f"mail:{item.raw_hash}:{field}",
+                        idempotency_key=(
+                            f"mail:{application_id}:{item.raw_hash}:{field}"
+                        ),
                         evidence=f"{field}: {value}"[:500],
                     )
+                if (
+                    not created_now
+                    and self.applications.get(application_id).version != before_version
+                ):
+                    updated_ids.add(application_id)
             if exists:
                 if application_id:
-                    self.emails.link(item.raw_hash, application_id, facts)
+                    self.emails.link(item.raw_hash, application_id, facts, mail_kind)
                 else:
-                    continue
+                    stats["unlinked"] += 1
             else:
                 self.emails.record(
                     account_id=account_id,
@@ -442,19 +585,31 @@ class MailSyncService:
                     sent_at=item.sent_at,
                     application_id=application_id,
                     facts=facts,
+                    mail_kind=mail_kind,
                 )
-            processed += 1
+                stats["new_emails"] += 1
+                if not application_id:
+                    stats["unlinked"] += 1
+            if not exists or linked_application_id != application_id:
+                stats["processed"] += 1
             self.jobs.progress(
                 job.job_id,
                 "message_committed",
-                {"last_message_id": item.message_id, "processed": processed},
+                {"last_message_id": item.message_id, **stats},
             )
-        self._reconcile_linked_mail()
+        self._reconcile_linked_mail(created_ids | updated_ids)
+        stats["created"] = len(created_ids)
+        stats["updated"] = len(updated_ids)
+        stats["unchanged"] = max(
+            0,
+            stats["new_emails"] - stats["created"] - stats["unlinked"] - len(updated_ids),
+        )
         self.excel.export_workbook(tracker_path)
-        self.jobs.complete(job.job_id, {"processed": processed})
-        return processed
+        self.jobs.complete(job.job_id, stats)
+        return stats
 
-    def _reconcile_linked_mail(self) -> None:
+    def _reconcile_linked_mail(self, force_stage: set[UUID] | None = None) -> None:
+        force_stage = force_stage or set()
         by_application: dict[UUID, list[StoredEmail]] = {}
         for email in self.emails.linked():
             by_application.setdefault(email.application_id, []).append(email)
@@ -471,7 +626,9 @@ class MailSyncService:
                     "投递时间",
                     sent_at.date(),
                     source="mail_authoritative",
-                    idempotency_key=f"reconcile:{receipt.raw_hash}:投递时间",
+                    idempotency_key=(
+                        f"reconcile:{application_id}:{receipt.raw_hash}:投递时间"
+                    ),
                     evidence=f"Date: {receipt.sent_at.isoformat()}",
                 )
             latest = emails[-1]
@@ -481,18 +638,26 @@ class MailSyncService:
                 "最近更新时间",
                 sent_at,
                 source="mail_authoritative",
-                idempotency_key=f"reconcile:{latest.raw_hash}:最近更新时间",
+                idempotency_key=(
+                    f"reconcile:{application_id}:{latest.raw_hash}:最近更新时间"
+                ),
                 evidence=f"Date: {latest.sent_at.isoformat()}",
             )
             stage = latest.facts.get("当前阶段")
             user_changed = self.applications.latest_user_change(application_id, "当前阶段")
-            if stage and (not user_changed or sent_at > self._naive_utc(user_changed)):
+            if stage and (
+                application_id in force_stage
+                or not user_changed
+                or sent_at > self._naive_utc(user_changed)
+            ):
                 self.applications.apply_field_change(
                     application_id,
                     "当前阶段",
                     stage,
                     source="mail_authoritative",
-                    idempotency_key=f"reconcile:{latest.raw_hash}:当前阶段",
+                    idempotency_key=(
+                        f"reconcile:{application_id}:{latest.raw_hash}:当前阶段:{stage}"
+                    ),
                     evidence=f"当前阶段: {stage}",
                 )
 

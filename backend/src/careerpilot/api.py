@@ -113,6 +113,19 @@ def create_app(
     page_fetcher = page_fetcher or PublicPageFetcher()
     model_client = model_client or OpenAICompatibleModelClient()
 
+    def export_current_tracker() -> None:
+        try:
+            path = safe_path(data_dir, Path(settings.load().tracker_path))
+            excel.export_workbook(path)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "excel.auto_export_failed",
+                    "message": "Data was saved, but Excel could not be updated",
+                },
+            ) from exc
+
     def resume_path(content_hash: str) -> Path:
         if len(content_hash) != 64 or any(char not in "0123456789abcdef" for char in content_hash):
             raise ValueError("invalid content hash")
@@ -203,6 +216,7 @@ def create_app(
                 *[field for field, value in request.values.items() if value not in (None, "")],
             ],
         )
+        export_current_tracker()
         return application_view(item)
 
     @app.get("/api/v1/applications/{application_id}")
@@ -256,7 +270,9 @@ def create_app(
     @app.put("/api/v1/applications/{application_id}/resume/{version_id}")
     def set_application_resume(application_id: UUID, version_id: UUID) -> dict[str, object]:
         try:
-            return resume_view(resumes.set_current(version_id, application_id))
+            item = resumes.set_current(version_id, application_id)
+            export_current_tracker()
+            return resume_view(item)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="resume or application not found") from exc
 
@@ -281,6 +297,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="resume not found") from exc
         for content_hash in hashes:
             resume_path(content_hash).unlink(missing_ok=True)
+        export_current_tracker()
 
     @app.patch("/api/v1/applications/{application_id}")
     def update_application(
@@ -302,6 +319,7 @@ def create_app(
                     expected_version=version,
                 )
                 version = item.version
+            export_current_tracker()
             return application_view(item)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="application not found") from exc
@@ -484,7 +502,7 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         try:
-            processed = mail.sync(
+            result = mail.sync(
                 adapter(request),
                 request.account_id,
                 tracker_path,
@@ -496,7 +514,7 @@ def create_app(
                 status_code=502,
                 detail={"code": "mail.sync_failed", "job_id": str(exc.job_id)},
             ) from exc
-        return {"job_id": str(job.job_id), "processed": processed}
+        return {"job_id": str(job.job_id), **result}
 
     @app.post("/api/v1/jobs/{job_id}/resume")
     def resume_job(job_id: UUID) -> dict[str, object]:
@@ -540,7 +558,7 @@ def create_app(
             raise HTTPException(status_code=409, detail="job resume checkpoint is invalid") from exc
         resumed = jobs.create("mail_sync", request.idempotency_key)
         try:
-            processed = mail.sync(
+            result = mail.sync(
                 adapter(request),
                 request.account_id,
                 tracker_path,
@@ -552,7 +570,7 @@ def create_app(
                 status_code=502,
                 detail={"code": "mail.sync_failed", "job_id": str(exc.job_id)},
             ) from exc
-        return {"job_id": str(resumed.job_id), "processed": processed}
+        return {"job_id": str(resumed.job_id), **result}
 
     return app
 

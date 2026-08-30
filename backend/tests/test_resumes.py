@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from careerpilot.api import create_app
+from careerpilot.excel import COLUMNS, RESUME_COLUMN, read_tracker
 from careerpilot.safe_files import MAX_RESUME_BYTES
 
 
@@ -31,12 +32,29 @@ def test_resume_versions_current_assignment_and_permanent_delete(tmp_path: Path)
         ).status_code
         == 200
     )
+    [row] = read_tracker(tmp_path / "tracker.xlsx")
+    assert row.values[RESUME_COLUMN] == "Backend@v1"
     assert (
         client.put(
             f"/api/v1/applications/{application['application_id']}/resume/{second['version_id']}"
         ).status_code
         == 200
     )
+    [row] = read_tracker(tmp_path / "tracker.xlsx")
+    assert row.values[RESUME_COLUMN] == "Backend@v2"
+    updated = client.patch(
+        f"/api/v1/applications/{application['application_id']}",
+        json={
+            "changes": {COLUMNS[-1]: "frontend edit"},
+            "expected_version": client.get(
+                f"/api/v1/applications/{application['application_id']}"
+            ).json()["version"],
+            "idempotency_key": "edit",
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    [row] = read_tracker(tmp_path / "tracker.xlsx")
+    assert row.values[COLUMNS[-1]] == "frontend edit"
     versions = client.get("/api/v1/resumes").json()
     assert next(item for item in versions if item["version"] == 1)["application_ids"] == []
     assert next(item for item in versions if item["version"] == 2)["application_ids"] == [
@@ -44,6 +62,8 @@ def test_resume_versions_current_assignment_and_permanent_delete(tmp_path: Path)
     ]
 
     assert client.delete(f"/api/v1/resumes/{first['resume_id']}?confirmed=true").status_code == 204
+    [row] = read_tracker(tmp_path / "tracker.xlsx")
+    assert row.values[RESUME_COLUMN] is None
     assert client.get("/api/v1/resumes").json() == []
     assert list((tmp_path / "resumes").iterdir()) == []
 
