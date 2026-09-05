@@ -1,5 +1,7 @@
 # Rejection Mail Sync Design
 
+> 历史记录（2026-09-05 统一标记）：正文保留当时的设计、任务和验收假设，不是当前执行指令。冲突内容已由[当前规则](../../../plan/CURRENT-POLICY.md)替代；按总体规划与新验收核对差距，不重做已完成阶段。
+
 ## Goal
 
 Recognize resume-screening rejection emails such as “暂时无法邀请你继续参与后续流程” and update the matching existing application to `已结束（简历未通过）`.

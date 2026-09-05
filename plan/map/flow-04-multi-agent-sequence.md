@@ -1,30 +1,28 @@
-# 流程图 4：统一 Career Assistant 时序
+# 流程图 4：Orchestrator Harness
 
-> 本图属于 Stage 6。第一版使用一个受控 Assistant 调用稳定 Service 和 LangGraph 子图，不预建 Multi-Agent。
+依据：[Harness](../stages/stage-06-agent-orchestration.md)。角色为职责边界，可先以模块实现，再按收益升级独立 Agent。
 
 ```mermaid
 sequenceDiagram
     participant U as 用户
-    participant A as Career Assistant
-    participant C as Application Core
-    participant G as Stage 5 LangGraph/工具
-
-    U->>A: 指定岗位并提出任务
-    A->>C: 读取最小必要岗位、当前简历和时间线
-    C-->>A: Schema 化事实与版本 ID
-    A->>G: 调用 Summary、A-G 评估、简历建议或面试准备
-    G-->>A: 结构化结果/interrupt/安全错误
-    A-->>U: 展示来源、预算、不确定性或确认请求
-    U->>A: 批准、修改或拒绝
-    A->>G: 使用同一 thread_id 恢复
-    G-->>A: 最终结构化结果
-    A-->>U: 汇总建议，不执行投递或文件修改
+    participant O as Orchestrator
+    participant C as 受控事实与成果工具
+    participant R as Research
+    participant E as Evaluation
+    participant P as Resume/Interview
+    participant V as Reviewer
+    U->>O: 指定岗位与任务并授权范围
+    O->>C: 读取Excel基线、投递简历和已有成果
+    C-->>O: 最小上下文、版本与缺口
+    O->>R: 复用或补齐完整公开背景
+    R-->>O: 公司/文化/市场/薪资/JD/考点与来源、未知项
+    O->>E: 复用或生成既有A–G分析
+    E-->>O: 有据判断与直观分数
+    O->>P: 用户需要的建议或全面准备
+    P-->>O: 建议/清单/故事/文字模拟结果
+    O->>V: 检查证据、范围和一致性
+    V-->>O: 通过或定位问题
+    O-->>U: 完整结果或明确标注的部分结果
 ```
 
-## 边界
-
-- Assistant 只路由已注册工具和子图。
-- Application Core 是唯一业务写入口。
-- Graph 状态不保存 Secret 或无关个人数据。
-- 写入报告或记录必须人工确认且保持幂等。
-- 只有出现可测量瓶颈时才评估 Multi-Agent。
+只调度本次请求所需模块，不因图中顺序强制运行全部能力；面试准备复用完整背景，缺少资料明确未知。共享研究不重复生成，权限和预算由 Orchestrator 限制；扩大授权范围时等待用户。失败恢复保留有效成果，不重复写入。

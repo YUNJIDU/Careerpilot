@@ -64,12 +64,12 @@ Python/规则 → 本地模型或外部模型 → Schema/业务规则校验 → 
 ### 0.5 首发产品边界
 
 - 本地 Web 是主要操作入口。
-- Excel 是双向统计和状态更新视图。
+- Excel 是岗位字段唯一事实源，Web 修改安全回写 Excel。
 - Markdown 是每个 Application 的详情和 Summary。
 - 163 是首个真实邮箱适配器，业务层使用统一 MailAdapter。
 - Summary 只由用户手动触发。
 - 首发使用单一主辅助 Agent；Multi-Agent 后置。
-- 首发严格单用户，可配置多份简历和多个邮箱账户。
+- 首发严格单用户，163 和多简历；多邮箱后置。
 - Windows 原生优先，随后提供 Docker。
 - 核心采用 Apache-2.0 Open Core。
 

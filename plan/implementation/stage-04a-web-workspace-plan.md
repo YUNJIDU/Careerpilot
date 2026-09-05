@@ -1,5 +1,7 @@
 # Stage 4A Web Workspace Implementation Plan
 
+> 历史记录（2026-09-05 统一标记）：正文保留当时的设计、任务和验收假设，不是当前执行指令。冲突内容已由[当前规则](../CURRENT-POLICY.md)替代；按总体规划与新验收核对差距，不重做已完成阶段。
+
 Date: 2026-07-28
 Design: `docs/superpowers/specs/2026-07-28-stage4-local-mvp-design.md`
 

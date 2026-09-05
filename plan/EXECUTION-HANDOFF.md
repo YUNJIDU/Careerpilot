@@ -1,131 +1,32 @@
-# CareerPilot 新对话执行交接
+# CareerPilot 当前执行交接
 
-更新时间：2026-08-29
+更新时间：2026-09-05。
 
-## 任务目标
+## 工作目录与依据
 
-从 Stage 0 开始实施 CareerPilot。
+主仓库：`E:/Master/CareerPilot/careerpilot`。外层副本不作执行依据，pr13-review 已移除。
+先读 [当前规则](CURRENT-POLICY.md)、[Stage 5](stages/stage-05-career-intelligence-modules.md)、[Harness](stages/stage-06-agent-orchestration.md)、[统一评测](EVALUATION.md)。旧设计涉及冲突项时以当前规则为准；不要重新从 Stage 0 开始。
 
-CareerPilot 是辅助求职 Agent，不替用户查看邮件、作求职决定或完成自动投递。首发版本服务本人及能够本地部署的 AI 技术用户，后续再演进为云端 Web/SaaS。
+## 状态
 
-## 首发闭环
+2026-09-05 已将当前工作分支快进到 GitHub main `2977ea4`，CMD 启动/关闭脚本与 main 一致。本轮只改规划，没有重跑功能验收。
+既有交接记载 Stage 0–3、4A–4B 完成；后续设计和提交包含最小多简历、Excel 完整快照、邮件申请链修复、Web 写回 Excel 与 CMD 启动。不能把这些记载视为通过了新版字段冲突和智能评测，也不能引用旧 pr13-review 的 Stage 0–7 已完成结论。
 
-```text
-本地 Web 配置
-  → 用户手动同步 163/本地邮件样本
-  → 提取客观求职信息
-  → 保存 SQLite、来源、证据和必要附件
-  → 双向同步 Excel Tracker
-  → 查看每个岗位的详情 Markdown
-  → 用户手动生成公司/JD/笔试/面试 Summary
-  → Web 或 Markdown 查看
-```
+## 下一步
 
-## 已批准技术基线
+1. 先用统一验收核对 Excel 真源、手工补充、邮件字段增量、歧义关联和永久删除；缺口独立修复，不重写全部底座。
+2. 建立统一评测样本并在正式取用前固定上游 commit/文件/许可；Stage 4B+ 与第一组共享基础，吸收 B 的重要性/证据、研究/面试流程与模型对比方法，只交付一次。
+3. 保留 Stage 5 原四组：基础情报 → A–G 判断/直观分数 → 简历建议 → 全面面试准备；第四组先清单/故事，后一次文字模拟。
+4. Stage 6 按 Orchestrator Harness 统一调度；独立 Agent 按验证收益逐个加入。
+5. Stage 7 外部辅助、Stage 8 部署另行推进；长期候选不成为近期需求。
 
-- Backend：Python、FastAPI、Pydantic。
-- Frontend：React、TypeScript、Vite。
-- Persistence：SQLAlchemy、SQLite、Alembic。
-- Excel：openpyxl。
-- 首要运行与验收环境：Windows。
-- Docker、安装包和自动更新在核心功能完善后进入 Stage 8。
-- 单用户，可管理多份简历和多个邮箱账户。
-- 运行数据统一位于 `data/`。
-- Apache-2.0 Open Core。
-- Stage 6 使用单一 Career Assistant；只有出现可测量瓶颈才评估 Multi-Agent。
-- Windows 凭证使用 Credential Manager。
-- API 从 `/api/v1` 开始，项目采用语义化版本。
+## 已确认边界
 
-## 执行顺序
+Excel 是岗位字段唯一事实源；邮件无变化不动，有新信息只改对应字段；手工短信信息不要求单独同步。事件先后不明保留手工值并提示。删除岗位永久删除专属派生内容。当前简历就是投递简历。
+面试准备尽可能完整，不猜测技术面或 HR 面；A–G 和共享研究复用，不另设产品评分体系。Resume 默认只建议，追问才给能力范围内的措辞。邮箱只读；自动发送、提交、验证码绕过不在范围。
 
-1. Stage 0：契约、安全与工程骨架。
-2. Stage 1：Excel Schema、解析、写出与差异计算。
-3. Stage 2：Application Core、SQLite、Alembic 和实际双向写入。
-4. Stage 3：MailAdapter、163、客观信息提取、附件和断点。
-5. Stage 4：本地 Web、岗位 Markdown、手动 Summary 和 Windows 验收。
-6. Stage 4B+：Summary 考点情报。
-7. Stage 5：A–G 评估、简历建议和面试准备。
-8. Stage 6：统一 Career Assistant。
-9. Stage 7：外部辅助。
-10. Stage 8：部署与产品化。
+## 工作方式
 
-不得跳过 Stage Gate。每个 Stage 的 Entry、任务、测试、Exit Gate 和 Demo 见详细计划。
+保留用户改动；任务只修改授权范围；每项成果按统一评测记录实际证据、样本量、模型版本和未通过项。需求变化同步更新规则、Stage 和验收；不得仅添加新设计而保留冲突指令。真实邮件、简历、数据库、Excel 和凭证不提交 Git。
 
-## 新对话必须先阅读
-
-1. [批准的框架设计](../docs/superpowers/specs/2026-07-26-careerpilot-framework-design.md)
-2. [Stage 0–4 实施总计划](implementation/README.md)
-3. [Stage 0 详细计划](implementation/stage-00-implementation.md)
-4. [接口与安全标准](stages/stage-api-standards.md)
-
-执行后续 Stage 时，再读取对应的实施文档：
-
-- [Stage 1](implementation/stage-01-implementation.md)
-- [Stage 2](implementation/stage-02-implementation.md)
-- [Stage 3](implementation/stage-03-implementation.md)
-- [Stage 4](implementation/stage-04-implementation.md)
-
-## 当前状态与下一步
-
-- Stage 0–3 和 Stage 4A–4B 已完成。
-- FastAPI、React 骨架、Excel 引擎、SQLite/Application Core、持久化
-  Job/Checkpoint、Fixture 邮件、163 只读 IMAP、规则提取和
-  Mail → SQLite → Excel 闭环已通过测试。
-- Stage 4A 已提供本地 Web 工作台、Web 新增/编辑 Tracker、申请详情、
-  邮件/Excel 同步、Jobs 和脱敏设置页。
-- Stage 4B 已提供岗位 Markdown、Brave Top 5 搜索、兼容 OpenAI 接口的
-  手动 Summary、不可变版本和可恢复 Job。
-- 下一步执行 Stage 4B+ Summary 考点情报，再按 Stage 5 四组顺序推进。
-- 运行数据继续保留在 `data/`，不得提交真实邮件、数据库、Tracker 或凭证。
-
-## 不可违反的边界
-
-- 用户始终负责理解邮件和作求职决定。
-- 邮件提取只保存客观信息、来源和证据。
-- 用户在 Excel/Web 中的修改优先，不得被静默覆盖。
-- 邮箱只读。
-- Summary 只由用户手动触发。
-- 首发不做岗位发现、职位推荐、提醒、模拟训练、自动填表和 Multi-Agent。
-- 首发不加载任意第三方插件。
-- 不登录第三方内容账号，不绕过反爬、验证码或付费墙。
-- 密钥不得进入 SQLite、Excel、Markdown、日志、前端、Git 或构建产物。
-- 真实邮件、简历、附件和运行数据不得提交到 Git。
-- 所有长任务必须有 Job、Checkpoint、幂等和安全恢复说明。
-
-## 实施工作方式
-
-- 先检查现有文件和工作树，保留用户已有改动。
-- 按 Stage 计划逐项实施，不自行扩展范围。
-- 每个功能先建立失败测试或契约测试。
-- API、Excel、邮箱、Agent 和前端不得绕过 Application Service。
-- 每完成一个 Work Package 就运行相关测试。
-- Stage 结束时运行全量检查，完成 Demo，并逐条验证 Exit Gate。
-- 未通过 Exit Gate，不进入下一 Stage。
-
-## Stage 5–6 接手规则
-
-- Stage 5 模块先作为可独立运行和测试的 Service/LangGraph 子图实现，Stage 6 再由 Career Assistant 统一编排。
-- Research、Evaluation、Resume、Interview 和 Reviewer Agent 都是允许加入的后续方向，但不是无条件编码清单。
-- 开发者必须先说明真实用户需求、使用场景、现有模块的不足、数据边界和端到端验收方式，再决定使用普通 Service、LangGraph 子图或独立 Agent。
-- 没有实际瓶颈时保持单 Orchestrator；有证据时可以逐个将现有模块升级为专用 Agent，不重写 Application Core。
-- 禁止只交付页面、接口、Agent 名称或演示数据而没有真实可用的核心流程。
-- A–G 分析、评分和 Prompt 边界可参考 [`santifer/career-ops`](https://github.com/santifer/career-ops)，但不得机械复制其完整运行时和数据架构。
-
-## 可复制到新对话的提示词
-
-```text
-请开始执行 CareerPilot Stage 0。
-
-项目路径：E:\Master\CareerPilot
-
-先完整阅读：
-1. plan/EXECUTION-HANDOFF.md
-2. docs/superpowers/specs/2026-07-26-careerpilot-framework-design.md
-3. plan/implementation/README.md
-4. plan/implementation/stage-00-implementation.md
-5. plan/stages/stage-api-standards.md
-
-严格按已批准范围实施，只执行 Stage 0，不提前实现 Stage 1–4。
-先检查仓库、环境、现有改动和适用的 AGENTS.md/技能说明，再开始修改。
-实施时持续运行对应测试；最后完成 Stage 0 Demo，逐条报告 Exit Gate 是否通过、修改了哪些文件、测试结果和剩余风险。
-```
+完整步骤见[总体规划](总规划/03-mvp-plan.md)。H、求职信、Offer、复盘统计仅为后续候选，不把上游全部内容作为近期任务。
