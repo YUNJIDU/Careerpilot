@@ -79,6 +79,9 @@ def test_invalid_output_is_not_published_and_can_retry(tmp_path: Path, change):
     model.result = deepcopy(RESULT)
     assert service.run(app.application_id, JD, **CONFIG)["analysis"] == RESULT
     assert len(JobService(db).list()) == 1
+    recovered = JobService(db).list()[0]
+    assert recovered.error_code is None
+    assert recovered.error_message_safe is None
 
 
 def test_jd_api_requires_confirmation_and_returns_persisted_report(tmp_path: Path):
@@ -107,3 +110,55 @@ def test_jd_api_requires_confirmation_and_returns_persisted_report(tmp_path: Pat
     response = client.post(url, json={"jd": JD, "data_leaving_confirmed": True})
     assert response.status_code == 200, response.text
     assert client.get(url).json() == [response.json()]
+
+
+def test_changed_jd_or_model_does_not_reuse_stale_analysis(tmp_path: Path):
+    db = Database(tmp_path / "careerpilot.db")
+    app = ApplicationService(db).create("Acme", "Engineer", idempotency_key="create")
+    model = Model()
+    service = JDService(db, model)
+    reports = [
+        service.run(app.application_id, JD, **CONFIG),
+        service.run(app.application_id, JD + "需要沟通能力。", **CONFIG),
+        service.run(app.application_id, JD, **{**CONFIG, "model": "other-model"}),
+        service.run(app.application_id, JD, **{**CONFIG, "base_url": "https://other.example/v1"}),
+    ]
+    assert len({item["job_id"] for item in reports}) == 4
+    assert len(model.calls) == 4
+    assert len(service.list(app.application_id)) == 4
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"requirements": [], "unknowns": []},
+        {**RESULT, "score": 5},
+        {"requirements": [{**RESULT["requirements"][0], "quote": "   "}], "unknowns": []},
+    ],
+)
+def test_empty_or_out_of_scope_model_outputs_are_not_published(tmp_path: Path, result):
+    db = Database(tmp_path / "careerpilot.db")
+    app = ApplicationService(db).create("Acme", "Engineer", idempotency_key="create")
+    model = Model()
+    model.result = result
+    service = JDService(db, model)
+    with pytest.raises(ValueError):
+        service.run(app.application_id, JD, **CONFIG)
+    assert service.list(app.application_id) == []
+
+
+def test_model_timeout_can_retry_after_process_restart(tmp_path: Path):
+    class TimeoutModel:
+        def generate(self, *args, **kwargs):
+            raise TimeoutError("private provider diagnostic")
+
+    db = Database(tmp_path / "careerpilot.db")
+    app = ApplicationService(db).create("Acme", "Engineer", idempotency_key="create")
+    with pytest.raises(TimeoutError):
+        JDService(db, TimeoutModel()).run(app.application_id, JD, **CONFIG)
+    failed = JobService(db).list()[0]
+    assert "private provider diagnostic" not in failed.error_message_safe
+    restarted = Database(tmp_path / "careerpilot.db")
+    report = JDService(restarted, Model()).run(app.application_id, JD, **CONFIG)
+    assert report["job_id"] == str(failed.job_id)
+    assert JobService(restarted).get(failed.job_id).error_code is None

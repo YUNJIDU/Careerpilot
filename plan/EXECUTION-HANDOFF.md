@@ -9,7 +9,7 @@
 
 ## 状态
 
-2026-09-05 已将当前工作分支快进到 GitHub main `2977ea4`，CMD 启动/关闭脚本与 main 一致。规划 PR #19 保持独立；后续开发位于 `feature/stage5-evidence-loop`，尚未提交发布。底座修复与 JD 首个切片已完成 64 项后端测试及前端检查，详情见[执行闭环](implementation/stage-05-part-one-loop.md)。
+2026-09-05 已将当前工作分支快进到 GitHub main `2977ea4`，CMD 启动/关闭脚本与 main 一致。规划 PR #19 已合并；实现分支 `feature/stage5-evidence-loop` 已提交 PR #20，尚未合并。底座修复与 JD 首个切片及后续边界测试已完成 69 项后端测试及前端检查，详情见[执行闭环](implementation/stage-05-part-one-loop.md)。
 既有交接记载 Stage 0–3、4A–4B 完成；后续设计和提交包含最小多简历、Excel 完整快照、邮件申请链修复、Web 写回 Excel 与 CMD 启动。不能把这些记载视为通过了新版字段冲突和智能评测，也不能引用旧 pr13-review 的 Stage 0–7 已完成结论。
 
 ## 下一步

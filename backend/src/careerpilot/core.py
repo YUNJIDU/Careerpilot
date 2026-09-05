@@ -1122,6 +1122,7 @@ class JobService:
             if not record:
                 raise KeyError(job_id)
             record.status, record.updated_at = "succeeded", utcnow()
+            record.error_code = record.error_message_safe = None
             session.flush()
             return self._view(session, record)
 
