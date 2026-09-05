@@ -1,27 +1,18 @@
-# 流程图 0：WBS 开发顺序
+# 开发顺序
+
+当前依据：[总体规划](../总规划/03-mvp-plan.md)。图示为后续工作，不代表已完成。
 
 ```mermaid
 flowchart TD
-    S0["Stage 0<br/>契约与安全"]
-    S1["Stage 1<br/>本地数据与 Excel 双向同步"]
-    S2["Stage 2<br/>Application Core、证据与文档"]
-    S3["Stage 3<br/>163/样本邮件同步与客观提取"]
-    S4["Stage 4<br/>本地 Web 与手动 Summary"]
-    M["首发技术用户版本"]
-    S5["Stage 5<br/>求职智能扩展模块"]
-    S6["Stage 6<br/>统一 Career Assistant"]
-    S7["Stage 7<br/>提醒、更多邮箱、验证码与自动填表"]
-    S8["Stage 8<br/>普通用户产品化与商业化"]
-
-    S0 --> S1
-    S1 --> S2
-    S2 --> S3
-    S3 --> S4
-    S4 --> M
-    M --> S5
-    S5 --> S6
-    S6 --> S7
-    S7 --> S8
+    B[核对现有 Stage 0–4 与 Windows 基线] --> T[建立评测与上游固定版本取用清单]
+    T --> F[4B+ / Stage 5 第一组：共享研究与证据]
+    F --> E[第二组：完整 A–G 与直观分数]
+    E --> R[第三组：简历建议]
+    R --> I[第四组：全面准备清单与故事映射]
+    I --> P[一次文字模拟与反馈]
+    P --> O[Stage 6：Orchestrator Harness]
+    O --> X[Stage 7：提醒/日历/受控预填/草稿]
+    X --> D[Stage 8：发布与后续产品化]
 ```
 
-Stage 0–4 是首发边界。后续 Stage 保留方向，进入对应阶段时再单独细化。
+每步按[统一评测](../EVALUATION.md)留下证据。H、求职信、Offer、复盘统计为候选，不是上述链路的隐含依赖。

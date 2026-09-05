@@ -1,8 +1,8 @@
 # CareerPilot 规划索引
 
-更新时间：2026-08-29
+更新时间：2026-09-05
 
-新对话开始实施时，先阅读：[执行交接](EXECUTION-HANDOFF.md)。
+唯一当前入口为本主仓库的 plan。先阅读 [当前产品规则](CURRENT-POLICY.md)、[执行交接](EXECUTION-HANDOFF.md)、[Harness](stages/stage-06-agent-orchestration.md) 与 [统一评测](EVALUATION.md)。旧文档按替代声明读取，长期愿景仅为候选。
 
 ## 已确认的产品定位
 
@@ -13,7 +13,7 @@ CareerPilot 是辅助求职 Agent，不是替用户完成求职的全权 Agent�
 首发框架基线：
 
 - Windows 原生优先跑通；Docker、安装包和自动更新在核心功能完善后处理。
-- 单用户，可管理多份简历和多个邮箱账户。
+- 单用户、163 邮箱、多份简历；多邮箱后置。
 - Python/FastAPI + React/TypeScript/Vite + SQLite。
 - Apache License 2.0。
 - 内置适配器优先；第三方插件生态后置。
@@ -35,9 +35,9 @@ CareerPilot 是辅助求职 Agent，不是替用户完成求职的全权 Agent�
 
 1. [开源项目、框架与模型参考](总规划/01-open-source-reference.md)
 2. [长期产品愿景](总规划/02-long-term-vision.md)
-3. [首发版本计划](总规划/03-mvp-plan.md)
+3. [总体规划与后续实施顺序](总规划/03-mvp-plan.md)
 4. [Stage、服务与 API 分布标准](stages/stage-api-standards.md)
-5. [首发框架设计总纲](../docs/superpowers/specs/2026-07-26-careerpilot-framework-design.md)
+5. [历史首发框架设计](../docs/superpowers/specs/2026-07-26-careerpilot-framework-design.md)
 
 ## 阶段拆分
 
@@ -73,10 +73,12 @@ CareerPilot 是辅助求职 Agent，不是替用户完成求职的全权 Agent�
 - 首发版本中的未读监控、主动提醒和紧急通知。
 - 登录第三方账号、绕过反爬或付费墙。
 - 首发版本中的自动填表、自动投递和自动提交。
-- 在单一 Career Assistant 已能完成任务时引入 Multi-Agent。
+- 无收益验证的一次性全角色 Multi-Agent；采用 Orchestrator 逐个接入专业能力。
 
 ## 推荐阅读顺序
 
-先以 Stage 0–4 为稳定基线，再完成 Stage 4B+ Summary 考点情报、Stage 5
+先核对 Stage 0–4 现有基线及新版规则差距、建立评测，再完成 Stage 4B+ Summary 考点情报、Stage 5
 四组求职智能和 Stage 6 单一 Career Assistant。Stage 7 接入外部辅助，Stage
 8 在核心功能完善后再做部署与产品化；不提前搭建 Multi-Agent 或云基础设施。
+
+近期确认吸收上游 B 要求重要性/证据、研究/面试流程和模型对比方法；H 与申请材料等列为后续候选。详见[上游策略](总规划/01-open-source-reference.md)。历史文档范围见[文档索引](../docs/README.md)。

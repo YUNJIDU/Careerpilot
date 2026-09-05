@@ -35,13 +35,11 @@ Open Core 当前采用 Apache License 2.0。面向 SaaS 的支付、配额、运
 - Docker Compose。
 - Windows 安装包。
 - 自动更新与明确的回滚路径。
-- PostgreSQL。
-- 后台 Worker。
-- 对象存储。
-- HTTPS。
 - 备份和恢复。
 
-### 8.2 多租户
+### 8.2 云端与多租户（另行设计）
+
+- 根据实际云端需求再评估 PostgreSQL、Worker、对象存储与 HTTPS，不作为本地安装前置。
 
 - 用户、组织和 RBAC/ABAC。
 - 租户隔离。

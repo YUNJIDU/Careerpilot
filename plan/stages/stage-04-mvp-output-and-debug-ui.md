@@ -95,4 +95,4 @@ Stage 0–4 完成即形成可交付给首批技术用户的版本。
 - [unclecode/crawl4ai](https://github.com/unclecode/crawl4ai)：公开网页转 LLM-friendly Markdown、缓存和可控抓取参考。只使用普通公开页面能力，不采用代理升级、反检测或绕过站点控制的功能。
 - [microsoft/markitdown](https://github.com/microsoft/markitdown)：JD、PDF/DOCX 等本地材料转换为 Markdown 的候选工具。
 
-这些项目是设计蓝本，不预先决定 Stage 4 的 Web 框架和最终抓取实现。
+这些项目只作参考；已有 Web/抓取基线以代码和 README 为准，不重新选择框架。

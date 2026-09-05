@@ -1,6 +1,8 @@
 # Job Application Tracker 开源参考与选型清单
 
-更新时间：2026-07-20
+> 2026-09-05 适用范围：本文保留原阶段设计；Excel 真源、永久删除、邮件字段增量、简历定义、全面面试准备、建议输出、Harness 与评测冲突项已由[当前规则](../CURRENT-POLICY.md)替代。首发限制仅适用于 Stage 0–4；长期愿景为候选，不自动进入近期范围。
+
+更新时间：2026-09-05
 
 ## 1. 结论
 
@@ -26,7 +28,7 @@
 | [jobtopbob/jobtopbob](https://github.com/jobtopbob/jobtopbob) | Go/Next.js、自托管、简历管理、AI 助手、Gmail 集成 | 完整产品的信息架构和用户流程 | 技术栈较重，不适合作为当前 Python MVP 基座 |
 | [coolbrother/apply-potato](https://github.com/coolbrother/apply-potato) | Python、Gmail、Google Sheets、AI 提取、状态检测、职位抓取 | 邮件状态分类、去重、表格同步、职位筛选 | 来源和表格实现绑定 Google；只借鉴逻辑 |
 | [shelialia/jobhunttrackingbot](https://github.com/shelialia/jobhunttrackingbot) | Python、SQLite、Gmail、LLM、提醒和漏斗图 | 轻量 Tracker、状态统计、提醒 | Telegram 不是当前入口 |
-| [santifer/career-ops](https://github.com/santifer/career-ops) | 职位评估、简历定制、公司研究、面试准备、Tracker | “岗位研究报告”的内容结构、人工确认、故事库思路 | 面向 Claude Code 工作流，不宜直接作为 Web 后端 |
+| [santifer/career-ops](https://github.com/career-ops-hq/career-ops) | 职位评估、简历定制、公司研究、面试准备、Tracker | “岗位研究报告”的内容结构、人工确认、故事库思路 | 面向 Claude Code 工作流，不宜直接作为 Web 后端 |
 | [Pickle-Pixel/ApplyPilot](https://github.com/Pickle-Pixel/ApplyPilot) | 职位发现、JD 抓取、匹配、简历定制、自动投递 | 后期自动投递的阶段拆分、dry-run 和人工确认 | 自动投递风险高，不进入 MVP |
 | [proficientlyjobs/proficiently-claude-skills](https://github.com/proficientlyjobs/proficiently-claude-skills) | 搜岗、简历定制、求职信、表单填报、按岗位保存文件 | 每个 Application 独立保存 JD、简历、求职信和投递记录 | 与特定 Agent CLI 绑定，适合作为后期流程参考 |
 | [Dinesh-Satram/job_application_agent_SL](https://github.com/Dinesh-Satram/job_application_agent_SL) | Python、FastAPI、Streamlit、browser-use、MCP、自动填表 | 后期浏览器自动填报、Streamlit 调试界面 | LinkedIn 自动化、凭证和反爬风险较高 |
@@ -39,7 +41,7 @@
 | 数据验证 | [Pydantic](https://github.com/pydantic/pydantic) | dataclasses | 邮件解析、LLM 输出和 API 边界统一使用同一模型 |
 | ORM/持久化 | [SQLAlchemy](https://github.com/sqlalchemy/sqlalchemy) | SQLModel | MVP 用 SQLite，后续迁移 PostgreSQL |
 | 数据库迁移 | [Alembic](https://github.com/sqlalchemy/alembic) | MVP 早期手工迁移 | 数据进入真实使用后立即启用 |
-| Excel | [openpyxl](https://foss.heptapod.net/openpyxl/openpyxl) | pandas + XlsxWriter | 数据库是事实源，`.xlsx` 是导出/同步视图 |
+| Excel | [openpyxl](https://foss.heptapod.net/openpyxl/openpyxl) | pandas + XlsxWriter | Excel 是岗位字段事实源，数据库承载运行与证据 |
 | 邮件协议 | Python `imaplib` + `email` 标准库 | [email-mcp](https://github.com/codefuturist/email-mcp) | 首发实现统一 MailAdapter 和 163 IMAP 只读适配器 |
 | 本地 Web | 进入 Stage 4 时选型 | Streamlit / React / 其他 | 已确定本地 Web 是首发主要入口，但框架不在总体阶段提前锁死 |
 | 定时任务 | APScheduler | Celery/RQ | MVP 单机定时轮询足够；多用户/高并发时再升级 |
@@ -85,7 +87,7 @@
 | [firecrawl/firecrawl](https://github.com/firecrawl/firecrawl) | 搜索、抓取、结构化抽取和 Webhook | 适合后续服务化；注意 AGPL/云服务边界 |
 | [browser-use/browser-use](https://github.com/browser-use/browser-use) | 动态网页、登录态、复杂页面操作和表单填报 | 仅在普通 HTTP/抓取失败时使用；自动提交必须人工批准 |
 | [browser-use/web-ui](https://github.com/browser-use/web-ui) | 浏览器 Agent 调试界面 | 后期自动填报 Demo 参考 |
-| [career-ops](https://github.com/santifer/career-ops) | 公司研究、岗位匹配、面试故事库 | 借鉴报告模板和人工决策点 |
+| [career-ops](https://github.com/career-ops-hq/career-ops) | 公司研究、岗位匹配、面试故事库 | 借鉴报告模板和人工决策点 |
 
 ### 情报输出应携带
 
@@ -204,3 +206,21 @@ MVP 不需要以上框架。关系数据库和可追溯事件表足够。
 - Phoenix/Langfuse（可观测性）
 - Mem0/Graphiti（确有跨任务个性化需求时）
 - Temporal（确有长任务、断点恢复和多 Worker 时）
+
+## 已确认的 career-ops 取用策略（2026-09-05）
+
+当初规划没有锁定上游 commit/tag，只能比较本地已选范围与当前上游能力，不能把所有额外功能都称作规划之后新增。上游当前描述 A–H，CareerPilot 仍采用既有 A–G 与五维综合判断/1–5 分。
+
+| 取用层级 | 内容 | 本项目处理 |
+|---|---|---|
+| 近期：B 增强 | JD 要求重要性、证据依据、先 JD 后简历的判断顺序 | 纳入 Stage 5 第一/二组；推断不得成为明确高要求，重要性不进入总分 |
+| 近期：研究与面试 | 公司业务/文化/市场研究、准备计划、故事、练习反馈 | 纳入原 Stage 5，复用内容与流程，不新建相同产品 |
+| 近期：模型对比 | 冻结案例、候选模型与参考输出比较 | 补充统一评测，不以参考模型一致替代正确性或 Excel 验收 |
+| 后续材料候选 | H 申请回答、求职信、申请邮件 | Stage 7 后续可选，用户主动请求；不照搬 H 的 4.5 分条件 |
+| 后续候选 | 谈薪/Offer、复盘与漏斗、独立格式检查 | 不加入近期验收，见长期候选 |
+| 不整体搬入 | 扫描/发现、PDF 生成、插件、CLI 批处理和 Markdown Tracker | 不符合当前范围或会重复运行/数据体系 |
+
+上游 golden-set 文档当前描述 10 个合成案例，主要检查候选模型与参考模型的一致性，岗位类型为门槛、分数为辅助；不是本项目的端到端质量保证。
+正式移植步骤：固定上游提交 → 列出具体文件和依赖 → 区分内容规则/可独立工具/上游专属运行时 → 保留 MIT 许可与署名 → 适配当前数据边界 → 用本项目样本验收。未进行该步骤前，不声称已经直接集成或完整复制上游。
+
+来源：[评估规则](https://github.com/career-ops-hq/career-ops/blob/main/modes/oferta.md)、[功能说明](https://github.com/career-ops-hq/career-ops/tree/main)、[评测说明](https://github.com/career-ops-hq/career-ops/tree/main/evals)、[许可证](https://github.com/career-ops-hq/career-ops/blob/main/LICENSE)。
