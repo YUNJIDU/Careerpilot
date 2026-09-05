@@ -190,6 +190,13 @@ class OpenAICompatibleModelClient:
             "\nEVIDENCE:\n"
             f"{json.dumps(payload, ensure_ascii=False, default=str)}"
         )
+        if "_output_schema" in payload:
+            evidence = {key: value for key, value in payload.items() if not key.startswith("_")}
+            prompt = (
+                f"{payload['_instructions']}\nSCHEMA:\n"
+                f"{json.dumps(payload['_output_schema'], ensure_ascii=False)}\nEVIDENCE:\n"
+                f"{json.dumps(evidence, ensure_ascii=False, default=str)}"
+            )
         request_body: dict[str, Any] = {
             "model": model,
             "messages": [

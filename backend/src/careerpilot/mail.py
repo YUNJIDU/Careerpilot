@@ -25,7 +25,6 @@ from careerpilot.core import (
     ExcelSyncService,
     JobService,
     PersistentJob,
-    StoredEmail,
     normalize_identity,
     terminal_label,
 )
@@ -354,7 +353,9 @@ def extract_facts(value: str, sender: str = "") -> dict[str, object]:
         ):
             facts["一面"] = "AI 面试"
             facts["当前阶段"] = "一面"
-        elif re.search(r"(?:线上|在线)?测评.{0,20}(?:邀请|安排)|邀请.{0,20}(?:线上|在线)?测评", text):
+        elif re.search(
+            r"(?:线上|在线)?测评.{0,20}(?:邀请|安排)|邀请.{0,20}(?:线上|在线)?测评", text
+        ):
             facts["测评"] = "待完成"
             facts["当前阶段"] = "测评"
         elif re.search(r"(?:笔试|考试).{0,20}(?:邀请|安排)|邀请.{0,20}(?:笔试|考试)", text):
@@ -439,8 +440,29 @@ class MailSyncService:
         job: PersistentJob,
         idempotency_key: str,
     ) -> dict[str, int]:
-        if tracker_path.exists():
+        baseline_hash = self.excel.fingerprint(tracker_path)
+        tracker_key = str(tracker_path.resolve())
+        pending = [
+            previous
+            for previous in self.jobs.list()
+            if previous.job_type in {"mail_sync", "tracker_write"}
+            and (previous.checkpoint or {}).get("tracker_key") == tracker_key
+            and (previous.checkpoint or {}).get("export_pending")
+        ]
+        if pending:
+            if any(previous.checkpoint["baseline_hash"] != baseline_hash for previous in pending):
+                raise ValueError("Excel changed after interrupted sync; reconcile before retrying")
+        elif tracker_path.exists():
             self.excel.import_workbook(tracker_path, f"{idempotency_key}:tracker-import")
+        self.jobs.progress(
+            job.job_id,
+            "baseline_ready",
+            {
+                "tracker_key": tracker_key,
+                "baseline_hash": baseline_hash,
+                "export_pending": True,
+            },
+        )
         stats = {
             "processed": 0,
             "new_emails": 0,
@@ -448,19 +470,18 @@ class MailSyncService:
             "updated": 0,
             "unchanged": 0,
             "unlinked": 0,
+            "conflicts": 0,
         }
-        known_ids = {item.application_id for item in self.applications.list()}
         created_ids: set[UUID] = set()
         updated_ids: set[UUID] = set()
-        anchors: dict[str, list[tuple[datetime, UUID]]] = {}
         fetched = adapter.fetch()
         items = (
             sorted(
                 fetched,
                 key=lambda item: (
-                    self._naive_utc(item.sent_at).replace(tzinfo=UTC)
+                    self._naive_utc(item.sent_at)
                     if item.sent_at
-                    else datetime.min.replace(tzinfo=UTC)
+                    else datetime.min.replace(tzinfo=UTC).replace(tzinfo=None)
                 ),
             )
             if isinstance(fetched, list)
@@ -469,112 +490,108 @@ class MailSyncService:
         for item in items:
             if not is_job_candidate(item):
                 continue
-            exists, linked_application_id = self.emails.find(
-                account_id, item.raw_hash, item.message_id
-            )
+            exists, _ = self.emails.find(account_id, item.raw_hash, item.message_id)
+            if exists and not self.emails.can_reprocess(account_id, item.raw_hash, item.message_id):
+                continue  # Deleted and manually corrected records must not be replayed.
             text = f"{item.subject}\n{item.text}"
             facts = extract_facts(text, item.sender)
             mail_kind = classify_mail(text)
             company, role = facts.get("公司名称"), facts.get("岗位")
-            application_id = None
-            created_now = False
+            application = None
+            same_company = [
+                a
+                for a in self.applications.list()
+                if company and normalize_identity(a.company) == normalize_identity(str(company))
+            ]
             if company and role:
-                application = next(
-                    (
-                        candidate
-                        for candidate in self.applications.list()
-                        if normalize_identity(candidate.company) == normalize_identity(str(company))
-                        and normalize_identity(candidate.role) == normalize_identity(str(role))
-                    ),
-                    None,
-                )
-                if application is None:
+                matches = [
+                    a
+                    for a in same_company
+                    if normalize_identity(a.role) == normalize_identity(str(role))
+                ]
+                if len(matches) == 1:
+                    application = matches[0]
+                elif not matches:
                     application = self.applications.create(
                         str(company),
                         str(role),
-                        idempotency_key=f"mail-app:{company}:{role}",
+                        idempotency_key=f"mail-app:{account_id}:{item.raw_hash}",
                     )
-                    if application.application_id not in known_ids:
-                        created_ids.add(application.application_id)
-                        known_ids.add(application.application_id)
-                        created_now = True
-                application_id = application.application_id
-                if mail_kind == "application_received" and item.sent_at:
-                    anchors.setdefault(normalize_identity(str(company)), []).append(
-                        (self._naive_utc(item.sent_at), application_id)
-                    )
+                    created_ids.add(application.application_id)
             elif company and mail_kind == "application_received":
-                company_key = normalize_identity(str(company))
-                used = {anchor_id for _, anchor_id in anchors.get(company_key, [])}
-                application = None
-                if linked_application_id and linked_application_id not in used:
-                    linked = self.applications.get(linked_application_id)
-                    if normalize_identity(linked.company) == company_key:
-                        application = linked
-                if application is None:
-                    application = self.applications.create(
-                        str(company),
-                        "岗位待确认",
-                        idempotency_key=f"mail-receipt:{account_id}:{item.raw_hash}",
+                application = self.applications.create(
+                    str(company),
+                    "岗位待确认",
+                    idempotency_key=f"mail-receipt:{account_id}:{item.raw_hash}",
+                )
+                created_ids.add(application.application_id)
+            elif len(same_company) == 1:
+                application = same_company[0]
+            application_id = application.application_id if application else None
+            if application:
+                before = application.version
+                updates = {k: v for k, v in facts.items() if k not in {"公司名称", "岗位"}}
+                if item.sent_at and mail_kind == "application_received":
+                    updates.setdefault("投递时间", item.sent_at.date())
+                prior = [e for e in self.emails.linked() if e.application_id == application_id]
+                for field, value in updates.items():
+                    latest = max(
+                        (
+                            self._naive_utc(e.sent_at)
+                            for e in prior
+                            if field in e.facts
+                            or (field == "投递时间" and e.facts.get("当前阶段") == "已投递")
+                        ),
+                        default=None,
                     )
-                    if application.application_id not in known_ids:
-                        created_ids.add(application.application_id)
-                        known_ids.add(application.application_id)
-                        created_now = True
-                application_id = application.application_id
-                if item.sent_at:
-                    anchors.setdefault(company_key, []).append(
-                        (self._naive_utc(item.sent_at), application_id)
-                    )
-            elif company and item.sent_at:
-                candidates = [
-                    anchor
-                    for anchor in anchors.get(normalize_identity(str(company)), [])
-                    if anchor[0] <= self._naive_utc(item.sent_at)
-                ]
-                if candidates:
-                    application_id = max(candidates, key=lambda anchor: anchor[0])[1]
-                elif mail_kind == "status" and facts.get("当前阶段"):
-                    application = self.applications.create(
-                        str(company),
-                        "岗位待确认",
-                        idempotency_key=f"mail-status:{account_id}:{item.raw_hash}",
-                    )
-                    application_id = application.application_id
-                    if application_id not in known_ids:
-                        created_ids.add(application_id)
-                        known_ids.add(application_id)
-                        created_now = True
-
-            before_version = (
-                self.applications.get(application_id).version if application_id else None
-            )
-            if application_id:
-                for field, value in facts.items():
-                    if field in {"公司名称", "岗位"}:
+                    sent = self._naive_utc(item.sent_at) if item.sent_at else None
+                    if latest and (sent is None or sent <= latest):
                         continue
-                    if field == "当前阶段" and item.sent_at:
+                    current = self.applications.get(application_id)
+                    if str(current.values.get(field)) == str(value):
                         continue
+                    user_changed = self.applications.latest_user_change(application_id, field)
+                    manual = user_changed is not None or (
+                        not prior and current.values.get(field) not in (None, "")
+                    )
+                    conflict = manual and (
+                        sent is None
+                        or user_changed is None
+                        or sent <= self._naive_utc(user_changed)
+                    )
+                    source = "mail_conflict" if conflict else "mail_authoritative"
                     self.applications.apply_field_change(
-                        application.application_id,
+                        application_id,
                         field,
                         value,
-                        source="mail",
-                        idempotency_key=(
-                            f"mail:{application_id}:{item.raw_hash}:{field}"
-                        ),
+                        source=source,
+                        idempotency_key=f"mail:{application_id}:{item.raw_hash}:{field}",
                         evidence=f"{field}: {value}"[:500],
                     )
-                if (
-                    not created_now
-                    and self.applications.get(application_id).version != before_version
-                ):
+                    stats["conflicts"] += int(conflict)
+                after = self.applications.get(application_id)
+                if after.version != before and item.sent_at:
+                    latest_update = after.values.get("最近更新时间")
+                    if not isinstance(latest_update, datetime) or self._naive_utc(
+                        item.sent_at
+                    ) > self._naive_utc(latest_update):
+                        self.applications.apply_field_change(
+                            application_id,
+                            "最近更新时间",
+                            self._naive_utc(item.sent_at),
+                            source="mail_authoritative",
+                            idempotency_key=f"mail:{item.raw_hash}:updated",
+                            evidence="Mail event time",
+                        )
+                if after.version != before and application_id not in created_ids:
                     updated_ids.add(application_id)
+                elif application_id not in created_ids:
+                    stats["unchanged"] += 1
+            else:
+                stats["unlinked"] += 1
             if exists:
                 if application_id:
                     self.emails.link(item.raw_hash, application_id, facts, mail_kind)
-                else:
-                    stats["unlinked"] += 1
             else:
                 self.emails.record(
                     account_id=account_id,
@@ -588,78 +605,20 @@ class MailSyncService:
                     mail_kind=mail_kind,
                 )
                 stats["new_emails"] += 1
-                if not application_id:
-                    stats["unlinked"] += 1
-            if not exists or linked_application_id != application_id:
-                stats["processed"] += 1
+            stats["processed"] += int(not exists or application_id is not None)
             self.jobs.progress(
-                job.job_id,
-                "message_committed",
-                {"last_message_id": item.message_id, **stats},
+                job.job_id, "message_committed", {"last_message_id": item.message_id, **stats}
             )
-        self._reconcile_linked_mail(created_ids | updated_ids)
-        stats["created"] = len(created_ids)
-        stats["updated"] = len(updated_ids)
-        stats["unchanged"] = max(
-            0,
-            stats["new_emails"] - stats["created"] - stats["unlinked"] - len(updated_ids),
-        )
+        stats["created"], stats["updated"] = len(created_ids), len(updated_ids)
+        if self.excel.fingerprint(tracker_path) != baseline_hash:
+            raise ValueError("Excel changed during mail sync; no overwrite performed")
         self.excel.export_workbook(tracker_path)
-        self.jobs.complete(job.job_id, stats)
+        for previous in pending:
+            self.jobs.complete(
+                previous.job_id, {"export_pending": False, "recovered_by": str(job.job_id)}
+            )
+        self.jobs.complete(job.job_id, {**stats, "export_pending": False})
         return stats
-
-    def _reconcile_linked_mail(self, force_stage: set[UUID] | None = None) -> None:
-        force_stage = force_stage or set()
-        by_application: dict[UUID, list[StoredEmail]] = {}
-        for email in self.emails.linked():
-            by_application.setdefault(email.application_id, []).append(email)
-        for application_id, emails in by_application.items():
-            emails.sort(key=lambda email: self._naive_utc(email.sent_at))
-            receipt = next(
-                (email for email in emails if email.facts.get("当前阶段") == "已投递"),
-                None,
-            )
-            if receipt:
-                sent_at = self._naive_utc(receipt.sent_at)
-                self.applications.apply_field_change(
-                    application_id,
-                    "投递时间",
-                    sent_at.date(),
-                    source="mail_authoritative",
-                    idempotency_key=(
-                        f"reconcile:{application_id}:{receipt.raw_hash}:投递时间"
-                    ),
-                    evidence=f"Date: {receipt.sent_at.isoformat()}",
-                )
-            latest = emails[-1]
-            sent_at = self._naive_utc(latest.sent_at)
-            self.applications.apply_field_change(
-                application_id,
-                "最近更新时间",
-                sent_at,
-                source="mail_authoritative",
-                idempotency_key=(
-                    f"reconcile:{application_id}:{latest.raw_hash}:最近更新时间"
-                ),
-                evidence=f"Date: {latest.sent_at.isoformat()}",
-            )
-            stage = latest.facts.get("当前阶段")
-            user_changed = self.applications.latest_user_change(application_id, "当前阶段")
-            if stage and (
-                application_id in force_stage
-                or not user_changed
-                or sent_at > self._naive_utc(user_changed)
-            ):
-                self.applications.apply_field_change(
-                    application_id,
-                    "当前阶段",
-                    stage,
-                    source="mail_authoritative",
-                    idempotency_key=(
-                        f"reconcile:{application_id}:{latest.raw_hash}:当前阶段:{stage}"
-                    ),
-                    evidence=f"当前阶段: {stage}",
-                )
 
     @staticmethod
     def _naive_utc(value: datetime) -> datetime:

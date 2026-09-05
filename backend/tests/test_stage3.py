@@ -55,12 +55,8 @@ def test_fixture_mail_to_sqlite_and_excel_is_idempotent(tmp_path: Path) -> None:
     service = MailSyncService(database)
     tracker = tmp_path / "tracker.xlsx"
 
-    assert service.sync(FixtureMailAdapter(fixture), "fixture", tracker, "sync-1")[
-        "processed"
-    ] == 1
-    assert service.sync(FixtureMailAdapter(fixture), "fixture", tracker, "sync-2")[
-        "processed"
-    ] == 0
+    assert service.sync(FixtureMailAdapter(fixture), "fixture", tracker, "sync-1")["processed"] == 1
+    assert service.sync(FixtureMailAdapter(fixture), "fixture", tracker, "sync-2")["processed"] == 0
     [row] = read_tracker(tracker)
     assert row.values["公司名称"] == "Acme"
     assert row.values["岗位"] == "Engineer"
@@ -157,8 +153,7 @@ def test_real_mail_rules_export_arcsoft_guizhou_and_dates(tmp_path: Path) -> Non
     assert (
         MailSyncService(Database(tmp_path / "careerpilot.db")).sync(
             FixtureMailAdapter(fixture), "fixture", tracker, "real-rules"
-        )
-        ["processed"]
+        )["processed"]
         == 2
     )
     rows = {row.values["公司名称"]: row.values for row in read_tracker(tracker)}
@@ -167,9 +162,9 @@ def test_real_mail_rules_export_arcsoft_guizhou_and_dates(tmp_path: Path) -> Non
     assert arcsoft["当前阶段"] == "已投递"
     assert arcsoft["投递时间"] == first_sent.date()
     assert arcsoft["最近更新时间"] == first_sent.replace(tzinfo=None)
-    guizhou = rows["贵州金融控股集团有限责任公司（贵州贵民投资集团有限责任公司）"]
-    assert guizhou["岗位"] == "岗位待确认"
-    assert guizhou["当前阶段"] == "笔试成绩可查询"
+    # Unknown role/status without a reliable application stays unlinked.
+    assert len(rows) == 1
+    assert len(EmailService(Database(tmp_path / "careerpilot.db")).linked()) == 1
 
 
 def test_same_company_receipts_create_separate_time_linked_applications(tmp_path: Path) -> None:
@@ -230,9 +225,10 @@ def test_same_company_receipts_create_separate_time_linked_applications(tmp_path
         "new_emails": 4,
         "processed": 4,
         "created": 2,
-        "updated": 1,
-        "unchanged": 1,
+        "updated": 0,  # Newly created applications are not also counted as updates.
+        "unchanged": 0,
         "unlinked": 0,
+        "conflicts": 0,
     }
     applications = sorted(
         ApplicationService(database).list(), key=lambda item: item.values["最近更新时间"]
@@ -277,7 +273,8 @@ def test_explicit_role_beats_time_fallback(tmp_path: Path) -> None:
         ("Acme", "Engineer"),
     }
     engineer = next(item for item in applications.list() if item.role == "Engineer")
-    assert engineer.values["当前阶段"] == "测评"
+    # Two same-company applications make the role-less assessment ambiguous.
+    assert engineer.values["当前阶段"] == "已投递"
 
 
 def test_unlinked_saved_mail_is_reprocessed(tmp_path: Path) -> None:
@@ -304,8 +301,9 @@ def test_unlinked_saved_mail_is_reprocessed(tmp_path: Path) -> None:
     )
 
     assert (
-        MailSyncService(database).sync(adapter, "fixture", tmp_path / "tracker.xlsx", "reprocess")
-        ["processed"]
+        MailSyncService(database).sync(adapter, "fixture", tmp_path / "tracker.xlsx", "reprocess")[
+            "processed"
+        ]
         == 1
     )
     [application] = ApplicationService(database).list()
@@ -313,13 +311,12 @@ def test_unlinked_saved_mail_is_reprocessed(tmp_path: Path) -> None:
     assert (
         MailSyncService(database).sync(
             adapter, "fixture", tmp_path / "tracker.xlsx", "reprocess-again"
-        )
-        ["processed"]
+        )["processed"]
         == 0
     )
 
 
-def test_sync_imports_manual_tracker_and_backfills_linked_mail_dates(tmp_path: Path) -> None:
+def test_empty_sync_preserves_manual_dates_without_replaying_linked_mail(tmp_path: Path) -> None:
     database = Database(tmp_path / "careerpilot.db")
     applications = ApplicationService(database)
     app = applications.create("Acme", "Engineer", idempotency_key="existing")
@@ -366,12 +363,13 @@ def test_sync_imports_manual_tracker_and_backfills_linked_mail_dates(tmp_path: P
         def fetch(self) -> list[MailItem]:
             return []
 
-    assert MailSyncService(database).sync(EmptyAdapter(), "fixture", tracker, "reconcile")[
-        "processed"
-    ] == 0
+    assert (
+        MailSyncService(database).sync(EmptyAdapter(), "fixture", tracker, "reconcile")["processed"]
+        == 0
+    )
     rows = {row.values["公司名称"]: row.values for row in read_tracker(tracker)}
-    assert rows["Acme"]["投递时间"] == sent_at.date()
-    assert rows["Acme"]["最近更新时间"] == sent_at.replace(tzinfo=None)
+    assert rows["Acme"]["投递时间"] == date(2026, 1, 1)
+    assert rows["Acme"]["最近更新时间"] is None
     assert rows["Acme"]["当前阶段"] == "人工阶段"
     assert rows["Acme"]["备注"] == "不要覆盖"
     assert rows["拼多多"]["岗位"] == "算法工程师-提前批"

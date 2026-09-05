@@ -1,5 +1,19 @@
 const API = "http://127.0.0.1:9998/api/v1";
 
+export type UnresolvedMail = { email_id: string; subject: string; sender: string; facts: Record<string, string> };
+
+export type JDReport = {
+  job_id: string;
+  jd: string;
+  source_hash: string;
+  model: string;
+  prompt_version: string;
+  analysis: {
+    requirements: Array<{ text: string; quote: string; importance: string; origin: string; reason: string }>;
+    unknowns: string[];
+  };
+};
+
 export type Application = {
   application_id: string;
   company: string;
@@ -93,7 +107,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     const detail = body.detail;
-    throw new Error(typeof detail === "string" ? detail : detail?.code ?? `请求失败 (${response.status})`);
+    throw new Error(typeof detail === "string" ? detail : detail?.message ?? detail?.code ?? `请求失败 (${response.status})`);
   }
   return response.status === 204 ? undefined as T : response.json() as Promise<T>;
 }
@@ -119,6 +133,14 @@ export const api = {
         idempotency_key: crypto.randomUUID(),
       }),
     }),
+  unresolvedMails: () => request<UnresolvedMail[]>("/unresolved-mails"),
+  associateMail: (emailId: string, applicationId: string) => request(`/unresolved-mails/${emailId}/association`, {
+    method: "POST", body: JSON.stringify({ application_id: applicationId }),
+  }),
+  jdAnalyses: (id: string) => request<JDReport[]>(`/applications/${id}/jd-analyses`),
+  analyzeJD: (id: string, jd: string) => request<JDReport>(`/applications/${id}/jd-analyses`, {
+    method: "POST", body: JSON.stringify({ jd, data_leaving_confirmed: true }),
+  }),
   summaries: (id: string) => request<Summary[]>(`/applications/${id}/summaries`),
   generateSummary: (id: string) =>
     request<{ job_id: string; summary: Summary }>(`/applications/${id}/summary-jobs`, {
@@ -141,7 +163,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   syncMail: (body: Record<string, unknown>) =>
-    request<{ job_id: string; processed: number; new_emails: number; created: number; updated: number; unchanged: number; unlinked: number }>("/mail-sync-jobs", {
+    request<{ job_id: string; processed: number; new_emails: number; created: number; updated: number; unchanged: number; unlinked: number; conflicts: number }>("/mail-sync-jobs", {
       method: "POST",
       body: JSON.stringify({ ...body, idempotency_key: crypto.randomUUID() }),
     }),

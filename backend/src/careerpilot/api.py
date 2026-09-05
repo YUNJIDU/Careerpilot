@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,6 +21,7 @@ from careerpilot.core import (
     upgrade_database,
 )
 from careerpilot.excel import COLUMNS
+from careerpilot.jd import JDService
 from careerpilot.mail import Imap163Adapter, MailAdapter, MailSyncError, MailSyncService
 from careerpilot.markdown import MarkdownRenderer
 from careerpilot.safe_files import MAX_RESUME_BYTES, validate_resume
@@ -77,6 +78,15 @@ class SettingsUpdateRequest(LocalSettings):
     brave_secret: str | None = Field(default=None, min_length=1)
 
 
+class MailAssociationRequest(BaseModel):
+    application_id: UUID
+
+
+class JDRequest(BaseModel):
+    jd: str = Field(min_length=1, max_length=30000)
+    data_leaving_confirmed: bool
+
+
 class SummaryJobRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=200)
     data_leaving_confirmed: bool
@@ -113,16 +123,38 @@ def create_app(
     page_fetcher = page_fetcher or PublicPageFetcher()
     model_client = model_client or OpenAICompatibleModelClient()
 
-    def export_current_tracker() -> None:
+    def require_current_tracker() -> None:
         try:
-            path = safe_path(data_dir, Path(settings.load().tracker_path))
+            excel.require_unmodified(safe_path(data_dir, Path(settings.load().tracker_path)))
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    def export_current_tracker() -> None:
+        path = safe_path(data_dir, Path(settings.load().tracker_path))
+        baseline_hash = excel.fingerprint(path)
+        try:
             excel.export_workbook(path)
         except Exception as exc:
+            pending = jobs.create("tracker_write", f"tracker-write:{uuid4()}")
+            jobs.progress(
+                pending.job_id,
+                "export_pending",
+                {
+                    "tracker_key": str(path.resolve()),
+                    "baseline_hash": baseline_hash,
+                    "export_pending": True,
+                },
+            )
+            jobs.fail(
+                pending.job_id,
+                "excel.auto_export_failed",
+                "Retry Excel export before importing or editing",
+            )
             raise HTTPException(
                 status_code=500,
                 detail={
                     "code": "excel.auto_export_failed",
-                    "message": "Data was saved, but Excel could not be updated",
+                    "message": "修改已暂存，但 Excel 写回失败。请解除文件占用后执行 Excel 导出；恢复前请勿导入或继续编辑。",
                 },
             ) from exc
 
@@ -205,6 +237,7 @@ def create_app(
             raise HTTPException(
                 status_code=422, detail=f"unknown tracker fields: {', '.join(sorted(unknown))}"
             )
+        require_current_tracker()
         item = applications.create(
             company,
             role,
@@ -270,6 +303,7 @@ def create_app(
     @app.put("/api/v1/applications/{application_id}/resume/{version_id}")
     def set_application_resume(application_id: UUID, version_id: UUID) -> dict[str, object]:
         try:
+            require_current_tracker()
             item = resumes.set_current(version_id, application_id)
             export_current_tracker()
             return resume_view(item)
@@ -291,6 +325,7 @@ def create_app(
     def delete_resume(resume_id: UUID, confirmed: bool = False) -> None:
         if not confirmed:
             raise HTTPException(status_code=400, detail="permanent deletion must be confirmed")
+        require_current_tracker()
         try:
             hashes = resumes.delete_resume(resume_id)
         except KeyError as exc:
@@ -308,6 +343,7 @@ def create_app(
             unknown = set(request.changes) - set(COLUMNS)
             if unknown:
                 raise ValueError(f"unknown tracker fields: {', '.join(sorted(unknown))}")
+            require_current_tracker()
             version = request.expected_version
             for field, value in request.changes.items():
                 item = applications.apply_field_change(
@@ -347,7 +383,19 @@ def create_app(
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
             jobs.complete(job.job_id, result)
         elif request.direction == "export":
-            excel.export_workbook(path)
+            try:
+                excel.require_unmodified(path, allow_pending=True)
+                excel.export_workbook(path)
+            except (ValueError, OSError) as exc:
+                jobs.fail(
+                    job.job_id,
+                    "excel.export_failed",
+                    "Excel export failed; original file preserved",
+                )
+                raise HTTPException(
+                    status_code=409,
+                    detail="Excel changed or unavailable; import changes before retrying",
+                ) from exc
             jobs.complete(job.job_id, {"path": str(path)})
         return {"job_id": str(job.job_id), **(result if request.direction == "import" else {})}
 
@@ -429,6 +477,52 @@ def create_app(
             if request.brave_secret:
                 setter("brave", request.brave_secret)
         return get_settings()
+
+    @app.get("/api/v1/unresolved-mails")
+    def unresolved_mails() -> list[dict]:
+        return mail.emails.unresolved()
+
+    @app.post("/api/v1/unresolved-mails/{email_id}/association")
+    def associate_mail(email_id: str, request: MailAssociationRequest) -> dict:
+        require_current_tracker()
+        try:
+            mail.emails.associate(email_id, request.application_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="mail or application not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"status": "associated"}
+
+    @app.get("/api/v1/applications/{application_id}/jd-analyses")
+    def list_jd(application_id: UUID) -> list[dict]:
+        try:
+            return JDService(database, model_client).list(application_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="application not found") from exc
+
+    @app.post("/api/v1/applications/{application_id}/jd-analyses")
+    def analyze_jd(application_id: UUID, request: JDRequest) -> dict:
+        if not request.data_leaving_confirmed:
+            raise HTTPException(status_code=422, detail="data leaving must be confirmed")
+        if not request.jd.strip():
+            raise HTTPException(status_code=422, detail="JD cannot be blank")
+        current = settings.load()
+        if not current.model_base_url or not current.model_name:
+            raise HTTPException(status_code=400, detail="configure the model first")
+        try:
+            return JDService(database, model_client).run(
+                application_id,
+                request.jd,
+                model=current.model_name,
+                base_url=current.model_base_url,
+                credential=named_secret("model"),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="application not found") from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502, detail="JD 分析未通过校验或模型调用失败，请重试；结果未发布"
+            ) from exc
 
     @app.post("/api/v1/applications/{application_id}/summary-jobs")
     def generate_summary(application_id: UUID, request: SummaryJobRequest) -> dict[str, object]:

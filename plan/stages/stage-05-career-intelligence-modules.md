@@ -8,6 +8,8 @@ Stage 5 在已稳定的 Application Core、Excel、163 邮箱、简历管理和�
 
 ## 第一组：智能基础层与 Summary 增强
 
+2026-09-05 开发进度：JD 要求与重要性首个切片已实现并通过合成测试；简历事实、映射、研究增强和真实模型质量尚未验收，第一组未完成。见[执行记录](../implementation/stage-05-part-one-loop.md)。
+
 ### 稳定 Service
 
 - 将 JD 整理为职责、必备项、加分项、技能、经验、学历、地点、工作授权和关键词 Schema。

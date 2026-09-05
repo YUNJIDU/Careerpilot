@@ -9,11 +9,11 @@ The recorded baseline includes Stage 0–3, Stage 4A–4B, multi-resume manageme
 
 Excel is the authoritative store for application fields. Mail contributes field-level updates; ambiguous conflicts preserve manual values. Confirmed snapshot deletion permanently removes the application and its derived records. The current resume means the submitted resume.
 
-Next: validate the existing data loop, establish evaluation fixtures, then deliver the original four Stage 5 groups (shared research, A–G evaluation, resume advice, comprehensive interview preparation), followed by the Orchestrator harness. Resume advice does not include replacement text unless requested. Interview preparation does not assume the interview type.
+Next: extend the JD slice with submitted-resume evidence and shared research, establish live evaluation fixtures, and deliver the original four Stage 5 groups (shared research, A–G evaluation, resume advice, comprehensive interview preparation), followed by the Orchestrator harness. Resume advice does not include replacement text unless requested. Interview preparation does not assume the interview type.
 
 Near-term career-ops reuse covers requirement importance/evidence, company research/interview workflows and model-comparison methodology. Application-answer drafts (H), cover letters, offer support and analytics remain optional later modules. We do not import the upstream scanner, PDF pipeline or separate tracker.
 
-Start with the [current policy](plan/CURRENT-POLICY.md), [overall plan](plan/总规划/03-mvp-plan.md), [handoff](plan/EXECUTION-HANDOFF.md), [harness](plan/stages/stage-06-agent-orchestration.md) and [evaluation plan](plan/EVALUATION.md). The [documentation index](docs/README.md) distinguishes current requirements from historical implementation records. Only documentation has been updated for the September 5 requirements; new evaluation results are not claimed.
+Start with the [current policy](plan/CURRENT-POLICY.md), [overall plan](plan/总规划/03-mvp-plan.md), [handoff](plan/EXECUTION-HANDOFF.md), [harness](plan/stages/stage-06-agent-orchestration.md) and [evaluation plan](plan/EVALUATION.md). The [documentation index](docs/README.md) distinguishes current requirements from historical implementation records. The current development branch adds baseline data-safety fixes and the first Stage 5 JD-analysis slice. See the [execution record](plan/implementation/stage-05-part-one-loop.md) for 64 passing backend tests, frontend checks, synthetic browser verification and outstanding live evaluation. This is not completion of Stage 5 group one.
 
 ## Windows development
 
