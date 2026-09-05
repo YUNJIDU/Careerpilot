@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import sqlite3
 import unicodedata
@@ -23,7 +24,6 @@ from sqlalchemy import (
     desc,
     or_,
     select,
-    update,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -348,6 +348,7 @@ class ApplicationService:
                 user_fields=user_fields or [],
             )
             session.add(record)
+            session.flush()
             return _application(record)
 
     def get(self, application_id: UUID) -> Application:
@@ -412,11 +413,10 @@ class ApplicationService:
             )
             user_fields = set(record.user_fields)
             if source == "user":
-                if value in (None, ""):
-                    user_fields.discard(field)
-                else:
-                    user_fields.add(field)
-            if source in {"user", "mail_authoritative"} or field not in user_fields:
+                user_fields.add(field)
+            if source != "mail_conflict" and (
+                source in {"user", "mail_authoritative"} or field not in user_fields
+            ):
                 updated = dict(record.values)
                 updated[field] = _json_value(value)
                 if (
@@ -543,7 +543,50 @@ class ExcelSyncService:
     def __init__(self, database: Database, applications: ApplicationService) -> None:
         self.database, self.applications = database, applications
 
+    def fingerprint(self, path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else "missing"
+
+    def remember_workbook(self, path: Path) -> None:
+        with self.database.session() as session:
+            session.add(
+                SyncBatchRecord(
+                    batch_id=str(uuid4()),
+                    batch_type="excel_baseline",
+                    idempotency_key=f"baseline:{uuid4()}",
+                    baseline={"path": str(path.resolve()), "hash": self.fingerprint(path)},
+                )
+            )
+
+    def require_no_pending_export(self, path: Path) -> None:
+        if any(
+            job.job_type in {"mail_sync", "tracker_write"}
+            and (job.checkpoint or {}).get("tracker_key") == str(path.resolve())
+            and (job.checkpoint or {}).get("export_pending")
+            for job in JobService(self.database).list()
+        ):
+            raise ValueError(
+                "Updates are not yet exported; recover Excel export or mail sync before editing or importing"
+            )
+
+    def require_unmodified(self, path: Path, *, allow_pending: bool = False) -> None:
+        if not allow_pending:
+            self.require_no_pending_export(path)
+        with self.database.session() as session:
+            records = session.scalars(
+                select(SyncBatchRecord)
+                .where(SyncBatchRecord.batch_type == "excel_baseline")
+                .order_by(desc(SyncBatchRecord.created_at))
+            )
+            latest = next(
+                (item for item in records if item.baseline.get("path") == str(path.resolve())), None
+            )
+            if latest and latest.baseline["hash"] != self.fingerprint(path):
+                raise ValueError("Excel changed outside the app; import it before writing")
+            if not latest and path.exists():
+                raise ValueError("Import the existing Excel workbook before writing")
+
     def import_workbook(self, path: Path, idempotency_key: str) -> dict[str, int]:
+        self.require_no_pending_export(path)
         rows = read_tracker(path)
         with self.database.session() as session:
             existing = session.scalar(
@@ -615,6 +658,8 @@ class ExcelSyncService:
             source.backup(destination)
 
         input_ids = {target_id for _, target_id in prepared}
+        if len(input_ids) != len(prepared):
+            raise ValueError("duplicate application in Excel snapshot")
         stats = {"created": 0, "updated": 0, "deleted": 0, "resume_mapped": 0}
         with self.database.session() as session:
             session.add(
@@ -694,11 +739,20 @@ class ExcelSyncService:
             deleted_ids = [item for item in records if item not in input_ids]
             if deleted_ids:
                 ids = [str(item) for item in deleted_ids]
-                session.execute(
-                    update(EmailRecord)
-                    .where(EmailRecord.application_id.in_(ids))
-                    .values(application_id=None)
-                )
+                for email in session.scalars(
+                    select(EmailRecord).where(EmailRecord.application_id.in_(ids))
+                ):
+                    email.application_id = None
+                    email.evidence = {**email.evidence, "application_deleted": True}
+                for checkpoint in session.scalars(select(JobCheckpointRecord)):
+                    if checkpoint.payload.get("application_id") in ids:
+                        session.delete(checkpoint)
+                        session.flush()
+                        session.execute(
+                            delete(BackgroundJobRecord).where(
+                                BackgroundJobRecord.job_id == checkpoint.job_id
+                            )
+                        )
                 for model in (
                     ApplicationResumeRecord,
                     SummaryVersionRecord,
@@ -710,6 +764,11 @@ class ExcelSyncService:
                     delete(ApplicationRecord).where(ApplicationRecord.application_id.in_(ids))
                 )
                 stats["deleted"] = len(ids)
+        self.remember_workbook(path)
+        for application_id in deleted_ids:
+            (self.database.path.parent / "markdown" / f"{application_id}.md").unlink(
+                missing_ok=True
+            )
         return stats
 
     def export_workbook(self, path: Path) -> Path:
@@ -733,7 +792,15 @@ class ExcelSyncService:
             )
             for application in self.applications.list()
         ]
-        return write_tracker(path, rows)
+        result = write_tracker(path, rows)
+        self.remember_workbook(path)
+        jobs = JobService(self.database)
+        for job in jobs.list():
+            if (job.checkpoint or {}).get("tracker_key") == str(path.resolve()) and (
+                job.checkpoint or {}
+            ).get("export_pending"):
+                jobs.complete(job.job_id, {"export_pending": False})
+        return result
 
 
 class EmailService:
@@ -758,6 +825,20 @@ class EmailService:
             )
             return record is not None, application_id
 
+    def can_reprocess(self, account_id: str, raw_hash: str, message_id: str | None) -> bool:
+        with self.database.session() as session:
+            conditions = [EmailRecord.raw_hash == raw_hash]
+            if message_id:
+                conditions.append(
+                    (EmailRecord.account_id == account_id) & (EmailRecord.message_id == message_id)
+                )
+            record = session.scalar(select(EmailRecord).where(or_(*conditions)))
+            return bool(
+                record
+                and not record.application_id
+                and not record.evidence.get("application_deleted")
+            )
+
     def link(
         self,
         raw_hash: str,
@@ -774,6 +855,33 @@ class EmailService:
                 "facts": {key: str(value) for key, value in facts.items()},
                 "mail_kind": mail_kind,
             }
+
+    def unresolved(self) -> list[dict[str, Any]]:
+        with self.database.session() as session:
+            return [
+                {
+                    "email_id": item.email_id,
+                    "subject": item.subject,
+                    "sender": item.sender,
+                    "facts": item.evidence.get("facts", {}),
+                }
+                for item in session.scalars(
+                    select(EmailRecord).where(EmailRecord.application_id.is_(None))
+                )
+                if not item.evidence.get("application_deleted")
+            ]
+
+    def associate(self, email_id: str, application_id: UUID) -> None:
+        with self.database.session() as session:
+            record = session.get(EmailRecord, email_id)
+            if not record or not session.get(ApplicationRecord, str(application_id)):
+                raise KeyError(email_id)
+            if record.evidence.get("application_deleted") or (
+                record.application_id and record.application_id != str(application_id)
+            ):
+                raise ValueError("Mail has been deleted or associated with another application")
+            record.application_id = str(application_id)
+            record.evidence = {**record.evidence, "association": "user_confirmed"}
 
     def linked(self) -> list[StoredEmail]:
         with self.database.session() as session:
@@ -1014,6 +1122,7 @@ class JobService:
             if not record:
                 raise KeyError(job_id)
             record.status, record.updated_at = "succeeded", utcnow()
+            record.error_code = record.error_message_safe = None
             session.flush()
             return self._view(session, record)
 

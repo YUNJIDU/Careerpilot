@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { api, Application, ApplicationDetail, Job, ResumeVersion, Settings, Summary } from "./api";
+import { api, Application, ApplicationDetail, Job, JDReport, UnresolvedMail, ResumeVersion, Settings, Summary } from "./api";
 import WelcomePage from "./WelcomePage";
 
 type Page = "welcome" | "overview" | "applications" | "detail" | "resumes" | "mail" | "excel" | "jobs" | "settings";
@@ -181,13 +181,45 @@ function DetailPage({ id, onChanged }: { id: string; onChanged: () => void }) {
       <div className="close-box"><h3>结束本次申请</h3><p>记录流程停止在哪个环节；之后仍可通过修改“当前阶段”重新开启。</p><div className="actions"><label>结束环节<select value={closeStep} onChange={(event) => setCloseStep(event.target.value)}>{PROCESS_FIELDS.map((field) => <option key={field}>{field}</option>)}</select></label><label>结果<select value={closeReason} onChange={(event) => setCloseReason(event.target.value)}><option>未通过</option><option>主动结束</option></select></label><button type="button" className="button danger" onClick={() => void closeApplication()}>标记已结束</button></div></div>
       </section>
       <div><section className="panel"><h2>时间线</h2>{detail.timeline.length ? <ol className="timeline">{detail.timeline.map((item, index) => <li key={`${item.created_at}-${index}`}><b>{String(item.payload.field ?? item.event_type)}</b><span>{String(item.payload.value ?? "")}</span><time>{new Date(item.created_at).toLocaleString()}</time></li>)}</ol> : <p className="empty">暂无时间线。</p>}</section>
-      <section className="panel"><h2>邮件证据</h2>{detail.emails.length ? detail.emails.map((mail, index) => <article className="evidence" key={`${mail.subject}-${index}`}><b>{mail.subject}</b><span>{mail.sender}</span><time>{mail.sent_at ? new Date(mail.sent_at).toLocaleString() : "时间未知"}</time></article>) : <p className="empty">暂无关联邮件。</p>}</section></div>
+      <section className="panel"><h2>邮件证据</h2>{detail.provenance.filter((item) => item.source === "mail_conflict").map((item, index) => <p key={index} role="status">字段冲突：{item.field}，邮件值「{String(item.value ?? "")}」。已保留人工值，请核对后在申请字段中修改。</p>)}{detail.emails.length ? detail.emails.map((mail, index) => <article className="evidence" key={`${mail.subject}-${index}`}><b>{mail.subject}</b><span>{mail.sender}</span><time>{mail.sent_at ? new Date(mail.sent_at).toLocaleString() : "时间未知"}</time></article>) : <p className="empty">暂无关联邮件。</p>}</section></div>
     </div>
+    <JDPanel key={id} id={id} />
     <section className="panel summary-panel"><div className="section-title"><div><h2>公开信息 Summary</h2><p>手动调用 Brave Top 5 和已配置模型；结果仅供信息整理。</p></div>{summaries.length > 0 && <a className="button" href={api.markdownUrl(id)} target="_blank" rel="noreferrer">查看 Markdown</a>}</div>
       <div className="data-warning"><strong>数据将离开本机</strong><p>公司、职位、现有客观邮件证据及公开网页正文会发送给已配置的模型服务。不会发送邮箱或 API 密钥。</p><label className="checkbox"><input type="checkbox" checked={dataLeavingConfirmed} onChange={(event) => setDataLeavingConfirmed(event.target.checked)} />我了解并确认本次调用</label><button className="button primary" disabled={!dataLeavingConfirmed || generating} onClick={() => void generateSummary()}>{generating ? "正在搜索并生成…" : "生成新 Summary"}</button></div>
       {summaries.length ? <SummaryView summary={summaries[0]} versions={summaries} /> : <p className="empty">尚未生成 Summary。</p>}
     </section>
   </>;
+}
+
+function JDPanel({ id }: { id: string }) {
+  const [jd, setJD] = useState("");
+  const [reports, setReports] = useState<JDReport[]>([]);
+  const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => { let active = true;
+    api.jdAnalyses(id).then((items) => { if (active) setReports(items); }).catch((e) => { if (active) setError(String(e)); });
+    return () => { active = false; };
+  }, [id]);
+  const generate = async (event: FormEvent) => {
+    event.preventDefault(); if (!confirmed || !jd.trim() || busy) return;
+    setBusy(true); setError("");
+    try { const report = await api.analyzeJD(id, jd); setReports((items) => [report, ...items.filter((item) => item.job_id !== report.job_id)]); setConfirmed(false); }
+    catch (e) { setError(String(e)); }
+    finally { setBusy(false); }
+  };
+  const importance: Record<string, string> = { critical: "硬性条件", high: "高", medium: "中", low: "低" };
+  return <section className="panel"><h2>JD 要求与重要性</h2><p>第一组首个交付：依据 JD 原文分析要求。重要性不代表个人匹配分数，模型判断需结合引文核对。</p>
+    <form onSubmit={generate}><label>完整 JD 原文<textarea value={jd} maxLength={30000} rows={8} required disabled={busy} onChange={(e) => setJD(e.target.value)} /></label>
+    <label className="checkbox"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(e) => setConfirmed(e.target.checked)} />确认将这份 JD 发送给设置中的模型服务</label>
+    <button className="button primary" disabled={busy || !confirmed || !jd.trim()}>{busy ? "正在分析…" : "分析 JD（失败后可重试）"}</button></form>
+    {error && <Notice kind="error">{error}</Notice>}
+    {reports.map((report) => <details key={report.job_id} open={report === reports[0]}><summary>JD 分析 · {report.source_hash.slice(0, 8)} · {report.model}</summary>
+      <table><thead><tr><th>要求</th><th>重要性／依据</th><th>JD 原文</th></tr></thead><tbody>{report.analysis.requirements.map((item, index) => <tr key={index}><td>{item.text}<p>{item.origin === "explicit" ? "明确要求" : "推断，待确认"}</p></td><td>{importance[item.importance]}<p>{item.reason}</p></td><td><blockquote>{item.quote}</blockquote></td></tr>)}</tbody></table>
+      <h3>待补充信息</h3>{report.analysis.unknowns.length ? <ul>{report.analysis.unknowns.map((value, index) => <li key={index}>{value}</li>)}</ul> : <p>模型未列出待补充项，请自行核对。</p>}
+      <details><summary>查看本次 JD 原文</summary><pre style={{ whiteSpace: "pre-wrap" }}>{report.jd}</pre></details>
+    </details>)}
+  </section>;
 }
 
 function SummaryView({ summary, versions }: { summary: Summary; versions: Summary[] }) {
@@ -247,6 +279,25 @@ function ResumesPage({ applications }: { applications: Application[] }) {
   </>;
 }
 
+function UnresolvedMails() {
+  const [mails, setMails] = useState<UnresolvedMail[]>([]);
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [selected, setSelected] = useState<Record<string, string>>({});
+  const [error, setError] = useState("");
+  const load = async () => { try { const [items, apps] = await Promise.all([api.unresolvedMails(), api.applications()]); setMails(items); setApplications(apps); } catch (e) { setError(String(e)); } };
+  useEffect(() => { void load(); }, []);
+  const associate = async (mail: UnresolvedMail) => {
+    try { await api.associateMail(mail.email_id, selected[mail.email_id]); await load(); }
+    catch (e) { setError(String(e)); }
+  };
+  return <section className="panel"><h2>待人工关联邮件</h2><p>选择岗位后，邮件成为该岗位的证据。请核对提取内容，再到岗位详情手动补充字段。</p><button className="button" onClick={() => void load()}>刷新待关联邮件</button>
+    {error && <Notice kind="error">{error}</Notice>}
+    {mails.length ? mails.map((mail) => <article className="evidence" key={mail.email_id}><b>{mail.subject}</b><span>{mail.sender}</span><p>{Object.entries(mail.facts).map(([key, value]) => `${key}：${value}`).join("；")}</p>
+      <label>关联岗位<select value={selected[mail.email_id] ?? ""} onChange={(e) => setSelected({ ...selected, [mail.email_id]: e.target.value })}><option value="">请选择岗位</option>{applications.map((app) => <option key={app.application_id} value={app.application_id}>{app.company} · {app.role}</option>)}</select></label>
+      <button className="button" disabled={!selected[mail.email_id]} onClick={() => void associate(mail)}>确认关联</button></article>) : <p>暂无待关联邮件。</p>}
+  </section>;
+}
+
 function MailPage({ settings, onDone }: { settings: Settings | null; onDone: () => void }) {
   const [since, setSince] = useState(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10));
   const [limit, setLimit] = useState(100);
@@ -267,6 +318,7 @@ function MailPage({ settings, onDone }: { settings: Settings | null; onDone: () 
     {!settings?.email && <Notice kind="info">请先在设置中填写 163 邮箱并保存授权码。</Notice>}
     {message && <Notice kind="success">{message}</Notice>}{error && <Notice kind="error">{error}</Notice>}
     <section className="panel form-stack"><label>同步起始日期<input type="date" value={since} onChange={(e) => setSince(e.target.value)} /></label><label>最多读取<input type="number" min={1} max={500} value={limit} onChange={(e) => setLimit(Number(e.target.value))} /></label><div className="actions"><button className="button" onClick={() => void run(true)} disabled={!settings?.email}>测试连接</button><button className="button primary" onClick={() => void run(false)} disabled={!settings?.email}>同步邮箱</button></div></section>
+    <UnresolvedMails />
   </>;
 }
 
